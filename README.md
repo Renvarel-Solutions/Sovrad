@@ -101,6 +101,14 @@ does not establish a private-project import. The shipped UI remains the calculat
 workflow and budget panel; multi-project dashboards, annotations and an owner
 decision center are not implemented.
 
+The backend now supports an explicit private project registry, planning items,
+creation-only workflow/child maps and separate layout overlays. These API
+foundations do not add dashboard controls to the current UI. Registering a
+repository candidate stores private pending metadata; it does not read source
+or discover projects. Keep candidate paths and project data outside public source.
+Grant changes through HTTP remain blocked until local action sessions exist.
+See [architecture](docs/ARCHITECTURE.md) for pagination and authority contracts.
+
 ## Structure and quality
 
 - apps/web: React, React Flow, inspector and proposal review.

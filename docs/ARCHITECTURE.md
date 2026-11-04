@@ -1,6 +1,6 @@
 # Sovrad architecture
 
-Developer reference for the local foundation, reviewed 2026-11-02 (package 0.1.0).
+Developer reference for the local foundation, reviewed 2026-11-04 (package 0.1.0).
 The browser provides the synthetic calculator workflow and AI budget panel.
 
 React/Vite defaults to 127.0.0.1:5173 and proxies `/api` to Fastify on
@@ -23,6 +23,49 @@ migration, WAL setup, bootstrap or seeding. Schema versions newer than supported
 are rejected, and initialization errors close the database handle. Existing
 daily attempts, history and spending are preserved through supported upgrades.
 Backups contain private data and must stay outside the public source tree.
+
+Schema 4 adds private registry, item/dependency, candidate, access, evidence and
+layout overlays without rewriting approved calculator snapshots or spending.
+`ProjectStore` in `project-store.ts` creates planning-only projects and items,
+creates workflow/child maps and stores layout revisions separately from semantic
+revisions. Item edits cannot reparent or relink existing maps. Shared child graphs
+have cycle, depth and total-work limits. The fictional navigation sample is
+separate from the calculator's original specification/history.
+
+## Registry API and authority
+
+`project-routes.ts` and legacy routes total 30 registered method/path pairs,
+excluding generated HEAD routes. Accessible project/workflow reads and their
+HEAD variants enforce selection and archival boundaries. Access selection never
+widens grants. Grant-bearing HTTP settings requests return 503 with
+`LOCAL_SESSION_UNAVAILABLE` until real local action sessions exist. Only the
+fixed sample calculator workflow with `synthetic_execute` can reach legacy task
+actions, and native start remains blocked. Authority/map changes audit and revoke
+retained task approvals transactionally. Archive restoration is limited to a
+selected existing project's exact current-revision restore request.
+
+`overview` returns bounded item and workflow pages with page-scoped counters and
+full matching `totals`. Follow `page.nextCursor` to exhaust both collections;
+one collection may finish before the other. Default limit is 50, maximum 100.
+`project-pagination.ts` signs cursors with a server-process key and binds them to
+the namespace, project, authority/map revisions, filters and matching view.
+Cursors grant no access. Relevant changes or server restart require refreshing:
+409 `STALE_CURSOR` returns no partial page. Layout-only changes preserve cursors.
+Pages and totals use one SQLite read snapshot.
+
+`GET /api/workspace?management=true` adds paginated registered-project summaries
+with exactly `id`, `name`, `archived`, `selected`, `grantRevision`, including
+registered archived/unselected choices for selection/restoration. It returns no
+paths, maps or source and performs no desktop-project discovery. Normal workspace
+visibility stays unchanged. Repository candidates remain inert private pending
+metadata; their paths are omitted from responses and no source is inspected.
+
+Shared experience DTOs live in `packages/core/src/experience.ts`.
+`annotation-material.ts` defines canonical selected-material serialization and
+WebCrypto hashing for future annotation consumers; there is no annotation or
+decision controller yet. `verification-projection.ts` distinguishes current bound
+runtime evidence from historical/unbound evidence. Current registry projections
+honestly return `not_checked`/`unknown`: no runtime evidence authority exists yet.
 
 Approval uses one immediate transaction for revision validation, the new
 snapshot, current workflow, proposal status and audit event. Stale or resolved

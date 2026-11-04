@@ -7,6 +7,7 @@ import {AIBudget} from './ai-budget.js';
 import {backupPath, migrate} from './migrations.js';
 import {ImplementationStore} from './implementation-store.js';
 import {ImportStore} from './import-store.js';
+import {ProjectStore} from './project-store.js';
 import {
   CALCULATOR_PROJECT, CALCULATOR_WORKFLOW, applyApprovedProposal, assertValidWorkflow,
   type Workflow, type Project, type Proposal
@@ -17,6 +18,7 @@ export class Storage {
   readonly budget: AIBudget;
   readonly implementation: ImplementationStore;
   readonly imports: ImportStore;
+  readonly registry: ProjectStore;
   private readonly directory: string;
   constructor(directory = dataDirectory()) {
     directory = validateDataDirectory(directory);
@@ -60,6 +62,7 @@ export class Storage {
       this.db.exec('CREATE TABLE IF NOT EXISTS ai_daily_usage(day TEXT PRIMARY KEY,requests INTEGER NOT NULL CHECK(requests >= 0)); CREATE TABLE IF NOT EXISTS workflow_revisions(workflow_id TEXT NOT NULL,revision INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(workflow_id,revision));');
       this.seed();
       this.db.prepare('INSERT OR IGNORE INTO workflow_revisions(workflow_id,revision,payload) SELECT id,revision,payload FROM workflows').run();
+      this.registry = new ProjectStore(this.db,this);
       this.budget = new AIBudget(this.db);
       this.imports = new ImportStore(this.db);
       this.implementation = new ImplementationStore(this.db,directory,(id,revision)=>{
@@ -113,6 +116,10 @@ export class Storage {
   }
   proposals(workflowId:string):Proposal[] {
     return (this.db.prepare('SELECT payload FROM proposals WHERE workflow_id=? ORDER BY rowid DESC').all(workflowId) as {payload:string}[]).map(r=>JSON.parse(r.payload) as Proposal);
+  }
+  proposal(id: string): Proposal | null {
+    const row=this.db.prepare('SELECT payload FROM proposals WHERE id=?').get(id) as {payload:string}|undefined;
+    return row ? JSON.parse(row.payload) as Proposal : null;
   }
   propose(input:Pick<Proposal,'workflowId'|'stepId'|'baseRevision'|'text'|'proposedRules'|'explanation'|'provenance'>):Proposal {
     const workflow=this.workflow(input.workflowId);

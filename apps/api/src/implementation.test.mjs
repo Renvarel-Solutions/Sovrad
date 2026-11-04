@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync, rmSync} from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import {randomUUID} from 'node:crypto';
 import {Storage} from './storage.ts';
 import {buildApp} from './server.ts';
 const workflowId = 'sample-calculator-arithmetic';
@@ -61,14 +62,26 @@ test('native isolation gate refuses start without launching any coding model and
   try { assert.equal(reopened.implementation.get(task.id).state,'cancelled'); } finally {reopened.close();}
 });
 
-test('tasks from stale specifications cannot be approved or started; imported projects never execute', async t => {
+test('tasks from stale specifications cannot be approved or started; read-only planning projects never execute', async t => {
   const {app,storage} = await fixture(t);
   approveSpec(storage);
-  const task = (await post(app,'/api/implementation/tasks',{workflowId,revision:2})).json().task;
+  const created = await post(app,'/api/implementation/tasks',{workflowId,revision:2});
+  assert.equal(created.statusCode,201,created.body);
+  const task = created.json().task;
+  const approved = await post(app,`/api/implementation/tasks/${task.id}/approve`,{manifestDigest:task.manifestDigest});
+  assert.equal(approved.statusCode,200,approved.body);
   const later = storage.propose({workflowId,stepId:'number-a',baseRevision:2,text:'A later change',
     proposedRules:['Accept positive whole numbers.'],explanation:'Synthetic change',provenance:'manual'});
   storage.decide(later.id,'approve');
   assert.equal((await post(app,`/api/implementation/tasks/${task.id}/approve`,{manifestDigest:task.manifestDigest})).statusCode,409);
-  assert.equal((await post(app,'/api/implementation/tasks',{workflowId:'imported-fictional',revision:1})).statusCode,409);
+  assert.equal((await post(app,`/api/implementation/tasks/${task.id}/start`,{})).statusCode,409);
+  const project = storage.registry.create({clientRequestId:randomUUID(),name:'Fictional read-only plan',description:'No source capture or execution.'}).project;
+  storage.registry.setGrant(project.id,{expectedGrantRevision:1,grant:'read_only'});
+  const readOnly = storage.registry.saveWorkflow(project.id,{clientRequestId:randomUUID(),expectedMapRevision:1,itemId:null,
+    name:'Fictional planning map',description:'',steps:[{id:'review',title:'Review',purpose:'Review this fictional plan.',kind:'process',
+      rules:['Keep source read-only.'],errorBehavior:'Explain uncertainty.',position:{x:0,y:0}}],connections:[]}).workflow;
+  assert.equal((await app.inject({url:`/api/workflows/${readOnly.id}`,headers})).statusCode,200);
+  assert.equal((await post(app,'/api/implementation/tasks',{workflowId:readOnly.id,revision:1})).statusCode,403);
+  assert.equal((await post(app,'/api/implementation/tasks',{workflowId:'missing-fictional',revision:1})).statusCode,404);
   assert.equal((await post(app,'/api/implementation/tasks',{workflowId,revision:3,repository:'C:/private',commands:['anything']})).statusCode,400);
 });

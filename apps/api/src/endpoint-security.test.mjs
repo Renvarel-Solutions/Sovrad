@@ -15,6 +15,10 @@ const expected=[
   'GET /api/implementation/tasks/:id','GET /api/implementation/tasks/:id/events',
   'POST /api/implementation/tasks/:id/approve','POST /api/implementation/tasks/:id/start','POST /api/implementation/tasks/:id/cancel',
   'GET /api/imports/status','GET /api/imports','GET /api/imports/:id','POST /api/imports',
+  'GET /api/workspace','POST /api/workspace/access','POST /api/projects',
+  'POST /api/projects/:id/settings','GET /api/projects/:id/overview',
+  'POST /api/projects/:id/items','POST /api/projects/:id/items/:itemId',
+  'POST /api/projects/:id/workflows','POST /api/workflows/:id/layout','POST /api/projects/:id/repositories',
 ].sort();
 
 test('every registered endpoint enforces local boundaries and returns no backend credential',async t=>{
@@ -23,7 +27,7 @@ test('every registered endpoint enforces local boundaries and returns no backend
   t.after(async()=>{await app.close();rmSync(directory,{recursive:true,force:true});});
   assert.deepEqual(app.routeInventory.filter(r=>r.method!=='HEAD').map(r=>r.method+' '+r.url).sort(),expected);
   for (const route of app.routeInventory) {
-    const url=route.url.replaceAll(':id',id);
+    const url=route.url.replaceAll(':itemId',id).replaceAll(':id',id);
     const valid={method:route.method,url,headers,payload:route.method==='POST'?{}:undefined};
     const control=await app.inject(valid);
     assert.notEqual(control.statusCode,403,route.method+' '+url+' positive control');

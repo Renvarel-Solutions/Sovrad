@@ -100,7 +100,7 @@ for (const version of [0, 1, 2, 3]) {
     const {db, directory, cleanup, before} = historical(t, version);
     const storage = new Storage(directory);
     cleanup.push(() => storage.close());
-    if (version < 3) {
+    if (version < 4) {
       const backups = readdirSync(path.join(directory, 'backups'));
       assert.equal(backups.length, 1);
       const backup = new Database(path.join(directory, 'backups', backups[0]), {readonly: true});
@@ -111,7 +111,7 @@ for (const version of [0, 1, 2, 3]) {
     } else {
       assert.ok(!readdirSync(directory).includes('backups'), 'current schema needs no migration backup');
     }
-    assert.equal(db.pragma('user_version', {simple: true}), 3);
+    assert.equal(db.pragma('user_version', {simple: true}), 4);
     for (const [table, rows] of Object.entries(before.rows)) {
       if (table === 'projects' || table === 'workflows' || table === 'workflow_revisions') continue;
       assert.deepEqual(db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(), rows, table);
@@ -135,7 +135,7 @@ test('newer schema is rejected without changing source bytes, schema, data or jo
   const filename = path.join(directory, 'sovrad.sqlite');
   const db = new Database(filename);
   cleanup.push(() => db.close());
-  db.exec("CREATE TABLE future_only(id TEXT PRIMARY KEY,value TEXT); INSERT INTO future_only VALUES ('fictional','preserve'); PRAGMA user_version=4;");
+  db.exec("CREATE TABLE future_only(id TEXT PRIMARY KEY,value TEXT); INSERT INTO future_only VALUES ('fictional','preserve'); PRAGMA user_version=5;");
   const before = snapshot(db);
   const hash = createHash('sha256').update(readFileSync(filename)).digest('hex');
   // Capture the rejected handle only for cleanup if the broken constructor leaks it.
