@@ -1,7 +1,8 @@
 # Sovrad architecture
 
-Developer reference for the local foundation, reviewed 2026-11-04 (package 0.1.0).
-The browser provides the synthetic calculator workflow and AI budget panel.
+Developer reference for the local source, reviewed 2026-11-11 (package 0.1.0).
+The browser provides registered-project views, workflow navigation, contextual
+annotations, work history and the original calculator proposal/budget controls.
 
 React/Vite defaults to 127.0.0.1:5173 and proxies `/api` to Fastify on
 127.0.0.1:4317. `WEB_PORT` and `API_PORT` configure these together.
@@ -32,15 +33,23 @@ revisions. Item edits cannot reparent or relink existing maps. Shared child grap
 have cycle, depth and total-work limits. The fictional navigation sample is
 separate from the calculator's original specification/history.
 
+Schema 5 adds immutable annotations and their canonical material JSON/digests,
+consent receipts, versioned work records, ordered events, idempotency results and
+an outbox. `WorkStore` in `work-store.ts` owns these records; user content remains
+in the private SQLite directory outside public source.
+
 ## Registry API and authority
 
-`project-routes.ts` and legacy routes total 30 registered method/path pairs,
-excluding generated HEAD routes. Accessible project/workflow reads and their
+`project-routes.ts`, `work-routes.ts` and legacy routes preserve project access
+boundaries. Accessible project/workflow reads and their
 HEAD variants enforce selection and archival boundaries. Access selection never
 widens grants. Grant-bearing HTTP settings requests return 503 with
 `LOCAL_SESSION_UNAVAILABLE` until real local action sessions exist. Only the
-fixed sample calculator workflow with `synthetic_execute` can reach legacy task
-actions, and native start remains blocked. Authority/map changes audit and revoke
+fixed sample calculator workflow with `synthetic_execute` can create, approve or
+start legacy implementation tasks. In `server.ts`, the `preHandler` resolves the
+task's workflow and applies project visibility to task reads, events and cancel;
+it adds `requireExecution` for implementation POSTs except cancel. Native start
+remains blocked. Authority/map changes audit and revoke
 retained task approvals transactionally. Archive restoration is limited to a
 selected existing project's exact current-revision restore request.
 
@@ -62,8 +71,8 @@ metadata; their paths are omitted from responses and no source is inspected.
 
 Shared experience DTOs live in `packages/core/src/experience.ts`.
 `annotation-material.ts` defines canonical selected-material serialization and
-WebCrypto hashing for future annotation consumers; there is no annotation or
-decision controller yet. `verification-projection.ts` distinguishes current bound
+WebCrypto hashing shared by the annotation composer and API.
+`verification-projection.ts` distinguishes current bound
 runtime evidence from historical/unbound evidence. Current registry projections
 honestly return `not_checked`/`unknown`: no runtime evidence authority exists yet.
 
@@ -72,9 +81,53 @@ snapshot, current workflow, proposal status and audit event. Stale or resolved
 proposals cannot overwrite a newer workflow. Rejection records an audit event
 without advancing the revision. Workflow GET includes revision history.
 
+## Annotation and work intake
+
+`work-routes.ts` registers strict GET/POST `/api/annotations`, GET `/api/work`,
+GET `/api/work/:id`, POST `/api/work/:id/amend`, POST `/api/work/:id/cancel` and
+GET `/api/work/:id/events`. Lists are bounded, defaulting to 50 and capped at 100;
+the events route supports `afterSequence`. Detail returns
+`WorkDetailResponse.annotation` directly from `work.annotationId`, not from a
+bounded annotation list. Evidence and decision arrays are currently empty.
+
+`WorkController.submitAnnotation` and `amendWork` build and hash selected material
+asynchronously. An immediate transaction rechecks context, authority and material
+before storing the exact `materialJSON`, receipt, work, event, request result and
+applicable outbox entry. An identical request key replays the original result;
+changed content under that key returns 409. Amendments create a new annotation
+revision, supersede old work and revoke its outbox entry. Cancellation is versioned
+and idempotent, retaining history. Authority/semantic changes revoke pending work.
+
+Material v1 selects only the annotation's declared context/text/target/intent,
+promotion request and selected project/item/workflow/stage fields. The shared
+builder and serializer are the field/order contract. No sibling graph, source,
+path or evidence body is included. `dispatch.contextDigest` is the SHA-256 of
+those UTF-8 JSON bytes. Connected consent binds that exact immutable revision;
+dispatch rechecks stored receipts and current authority before passing only the
+stored JSON to an interpreter.
+
+Local notes create no receipt or outbox and work with AI off. Connected intake
+requires fresh consent and saves blocked work with null interpretation because
+`registerWork` constructs no adapter. The constructor-only interpreter seam has
+no HTTP/config enablement and supplies no execution or acceptance authority.
+There is no automatic reconnect, local-note promotion or future-note promotion.
+In-process claims use a fence and a 20-second expiry: late callbacks discard the
+result and block/revoke the claim; startup also revokes interrupted claims without
+retry. This recovery mechanism does not establish native isolation or execution
+lease safety.
+
+The React composer supports project, workflow and stage context, including linked
+child stages with their parent item. `work-items/WorkDetail.tsx` displays the exact
+referenced annotation and passes it into amendment. Explicit stale-work refresh
+fetches the latest work version and context while preserving edited fields and
+resetting consent. Polling preserves drafts; semantic/payload changes invalidate
+consent while layout-only changes do not. The public `work-items/` source folder
+is distinct from the ignored private `work/` directory.
+
 ## AI boundary
 
-`ai.ts` requires backend configuration and per-request consent. Only the selected
+The original calculator proposal path in `ai.ts` is separate from annotation
+intake. It requires backend configuration and per-request consent. Only the selected
 step title, purpose, rules and correction are sent. `createPrivateAIClient`
 restricts transport to the OpenAI Responses and input-token-count POST endpoints,
 rebuilds outgoing headers, refuses redirects and disables SDK logs/retries.

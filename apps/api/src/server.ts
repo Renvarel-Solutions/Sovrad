@@ -8,6 +8,7 @@ import {registerImports} from './import-routes.js';
 import {containsPrivateContent} from './privacy.js';
 import {ProjectError} from './project-store.js';
 import {projectFailure, registerProjects} from './project-routes.js';
+import {registerWork} from './work-routes.js';
 
 const manualSchema = z.object({
   workflowId: z.string().min(1).max(100), stepId: z.string().min(1).max(100),
@@ -121,6 +122,7 @@ export function buildApp(storage: Storage, options: {port?: number; webPort?: nu
       layout:storage.registry.layout(id),stepVerification:storage.registry.stepVerification(workflow)};
   });
   registerProjects(app,storage);
+  registerWork(app,storage);
   registerProposals(app, storage, ai.apiKey);
   registerAI(app, storage, ai);
   registerImplementation(app, storage);

@@ -35,7 +35,7 @@ test('existing calculator upgrades with unchanged IDs rules and ledger', async t
   assert.equal(JSON.stringify(storage.history(CALCULATOR_WORKFLOW.id)),history);
   assert.equal(storage.budget.status().dailyAttempts,1);
   assert.equal(storage.budget.status().paused,true);
-  assert.equal(db.pragma('user_version',{simple:true}),4);
+  assert.equal(db.pragma('user_version',{simple:true}),5);
 });
 
 test('planning project has no source or execution',async t=>{

@@ -6,10 +6,10 @@ import {AIStatus} from '../AIStatus';
 import {verificationLabel} from './WorkflowList';
 
 export type ProposalDraft = {message:string;rules:string;explanation:string;baseRevision:number;dirty:boolean};
-export function WorkflowInspector({workflow,step,verification,proposals,draft,onDraft,onRefresh,onChild,onSelect}:{
+export function WorkflowInspector({workflow,step,verification,proposals,draft,onDraft,onRefresh,onChild,onSelect,onAnnotate}:{
   workflow:Workflow;step:Step;verification:StepVerification|undefined;proposals:Proposal[];
   draft:ProposalDraft;onDraft:(draft:ProposalDraft)=>void;onRefresh:()=>Promise<void>;
-  onChild:(id:string)=>void;onSelect:(id:string)=>void;
+  onChild:(id:string)=>void;onSelect:(id:string)=>void;onAnnotate:()=>void;
 }) {
   const [tab,setTab]=useState<'rules'|'changes'>('rules');
   const [consent,setConsent]=useState(false);
@@ -89,7 +89,7 @@ export function WorkflowInspector({workflow,step,verification,proposals,draft,on
           <button className="secondary-button" disabled={busy||stale||!draft.message.trim()||!consent||!aiAvailable} onClick={()=>void submit(true)}><BrainCircuit size={15}/>Ask AI to draft rules</button>
           {!aiAvailable&&<p className="muted-tiny">AI is off until configured in the local backend.</p>}
         </div>
-        <div className="future-controls"><button className="secondary-button" disabled>Annotate this stage</button><p className="helper">Annotations and connected work are not available yet. Use the proposal form above to review specification rules locally.</p></div>
+        <div className="future-controls"><button className="secondary-button" onClick={onAnnotate}>Annotate this stage</button><p className="helper">Keep a contextual note in Sovrad or request help. This draft is copied into the annotation; it does not change the proposal.</p></div>
       </>:<><div className="section-kicker">Change history for this step</div>
         {!current.length?<div className="empty-state"><GitPullRequest size={28}/><b>No proposals yet</b><p>Describe a correction in the Rules tab. Proposed changes appear here for approval.</p>
           <button className="secondary-button" onClick={()=>setTab('rules')}>Write a proposal</button></div>:current.map(proposal=><div className="proposal-card" key={proposal.id}>

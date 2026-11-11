@@ -19,6 +19,8 @@ const expected=[
   'POST /api/projects/:id/settings','GET /api/projects/:id/overview',
   'POST /api/projects/:id/items','POST /api/projects/:id/items/:itemId',
   'POST /api/projects/:id/workflows','POST /api/workflows/:id/layout','POST /api/projects/:id/repositories',
+  'GET /api/annotations','POST /api/annotations','GET /api/work','GET /api/work/:id',
+  'POST /api/work/:id/amend','POST /api/work/:id/cancel','GET /api/work/:id/events',
 ].sort();
 
 test('every registered endpoint enforces local boundaries and returns no backend credential',async t=>{

@@ -28,8 +28,7 @@ export function buildSelectedAnnotationMaterial(input: {
       (context.itemId ?? null) !== (item?.id ?? null) || (item && item.projectId !== project.id) ||
       (context.workflowId ?? null) !== (workflow?.id ?? null) || (workflow && workflow.projectId !== project.id) ||
       (workflow ? context.specRevision !== workflow.revision : context.specRevision !== undefined) ||
-      (context.stepId ?? null) !== (step?.id ?? null) || (step && !workflow?.steps.some(s => s.id === step.id)) ||
-      (item?.workflowId && workflow && item.workflowId !== workflow.id)) throw new Error('Invalid selected context');
+      (context.stepId ?? null) !== (step?.id ?? null) || (step && !workflow?.steps.some(s => s.id === step.id))) throw new Error('Invalid selected context');
   return canonicalMaterial({schemaVersion: 1, context: canonicalContext(context), text: draft.text,
     target: draft.target, intent: draft.intent, promoteFuture: draft.promoteFuture,
     selection: {project, item, workflow, step: step ? {...step, inputs: step.inputs ?? [], outputs: step.outputs ?? []} : null}});

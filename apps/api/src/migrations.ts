@@ -11,8 +11,8 @@ export function backupPath(directory: string): string {
 
 export function migrate(db: Database.Database, directory: string, existing: boolean): void {
   const version = db.pragma('user_version', {simple: true}) as number;
-  if (version > 4) throw new Error('Database is newer than this Sovrad version');
-  if (version === 4) return;
+  if (version > 5) throw new Error('Database is newer than this Sovrad version');
+  if (version === 5) return;
   // VACUUM INTO is SQLite's consistent snapshot API and includes committed WAL data.
   if (existing) db.prepare('VACUUM INTO ?').run(backupPath(directory));
   db.transaction(() => {
@@ -27,7 +27,7 @@ export function migrate(db: Database.Database, directory: string, existing: bool
     if (version < 3) db.exec(`CREATE TABLE imported_snapshots(id TEXT PRIMARY KEY,payload TEXT NOT NULL);
       CREATE TABLE import_quarantines(id TEXT PRIMARY KEY,time TEXT NOT NULL,file_hash TEXT NOT NULL,reason TEXT NOT NULL);`);
     // Additive overlays preserve the original project, workflow and approval bytes.
-    db.exec(`
+    if (version < 4) db.exec(`
       CREATE TABLE project_metadata(project_id TEXT PRIMARY KEY REFERENCES projects(id),payload_version INTEGER NOT NULL DEFAULT 1 CHECK(payload_version=1),payload TEXT NOT NULL);
       CREATE TABLE project_items(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),parent_id TEXT REFERENCES project_items(id),workflow_id TEXT REFERENCES workflows(id),payload_version INTEGER NOT NULL DEFAULT 1 CHECK(payload_version=1),payload TEXT NOT NULL);
       CREATE INDEX project_items_project ON project_items(project_id);
@@ -41,6 +41,18 @@ export function migrate(db: Database.Database, directory: string, existing: bool
       CREATE TABLE project_audit_events(sequence INTEGER PRIMARY KEY AUTOINCREMENT,project_id TEXT NOT NULL REFERENCES projects(id),kind TEXT NOT NULL,time TEXT NOT NULL,payload TEXT NOT NULL);
       CREATE TABLE workflow_layouts(workflow_id TEXT PRIMARY KEY REFERENCES workflows(id),layout_revision INTEGER NOT NULL,payload_version INTEGER NOT NULL DEFAULT 1 CHECK(payload_version=1),payload TEXT NOT NULL);
     `);
-    db.pragma('user_version = 4');
+    db.exec(`
+      CREATE TABLE annotations(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),supersedes_id TEXT REFERENCES annotations(id),revision INTEGER NOT NULL CHECK(revision>0),payload_version INTEGER NOT NULL DEFAULT 1 CHECK(payload_version=1),material_json TEXT NOT NULL,material_digest TEXT NOT NULL,payload TEXT NOT NULL);
+      CREATE INDEX annotations_project ON annotations(project_id);
+      CREATE TABLE annotation_consent_receipts(annotation_id TEXT PRIMARY KEY REFERENCES annotations(id),payload_version INTEGER NOT NULL DEFAULT 1 CHECK(payload_version=1),payload TEXT NOT NULL);
+      CREATE TABLE work_items(id TEXT PRIMARY KEY,annotation_id TEXT NOT NULL UNIQUE REFERENCES annotations(id),project_id TEXT NOT NULL REFERENCES projects(id),state TEXT NOT NULL,version INTEGER NOT NULL CHECK(version>0),payload_version INTEGER NOT NULL DEFAULT 1 CHECK(payload_version=1),payload TEXT NOT NULL);
+      CREATE INDEX work_items_project ON work_items(project_id,state);
+      CREATE TABLE work_events(sequence INTEGER PRIMARY KEY AUTOINCREMENT,work_id TEXT NOT NULL REFERENCES work_items(id),kind TEXT NOT NULL,time TEXT NOT NULL,detail TEXT NOT NULL);
+      CREATE INDEX work_events_work ON work_events(work_id,sequence);
+      CREATE TABLE work_requests(scope TEXT NOT NULL,request_id TEXT NOT NULL,input_json TEXT NOT NULL,result_json TEXT NOT NULL,PRIMARY KEY(scope,request_id));
+      CREATE TABLE work_outbox(id TEXT PRIMARY KEY,work_id TEXT NOT NULL UNIQUE REFERENCES work_items(id),annotation_id TEXT NOT NULL REFERENCES annotations(id),state TEXT NOT NULL CHECK(state IN ('pending','claimed','completed','revoked')),fence INTEGER NOT NULL DEFAULT 0,expires_at TEXT,actual_target TEXT,grant_revision INTEGER NOT NULL,payload_version INTEGER NOT NULL DEFAULT 1 CHECK(payload_version=1),created_at TEXT NOT NULL);
+      CREATE INDEX work_outbox_pending ON work_outbox(state,work_id);
+    `);
+    db.pragma('user_version = 5');
   }).immediate();
 }

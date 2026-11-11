@@ -10,6 +10,7 @@ import {
   type ProjectSettingsInput, type RegisteredProject, type RepositoryCandidate, type RepositoryCandidateInput,
   type StepVerification, type Workflow, type WorkflowCreateInput, type WorkflowLayout, type WorkspaceResponse,
   type WorkspaceQuery, type ProjectManagementPage, type ProjectManagementSummary,
+  type WorkState,
 } from '@renvarel/architect-core';
 import {containsPrivateContent} from './privacy.js';
 import {projectStepVerification} from './verification-projection.js';
@@ -53,14 +54,15 @@ export class ProjectError extends Error {
   constructor(readonly status: 400 | 403 | 404 | 409, message: string) { super(message); }
 }
 type Metadata = Pick<RegisteredProject, 'archived' | 'grant' | 'grantRevision' | 'mapRevision' | 'sourceState'>;
-type WorkflowReader = {workflow(id: string): Workflow | null; workflows(id: string): Workflow[]};
+type StorageReader = {workflow(id: string): Workflow | null; workflows(id: string): Workflow[];
+  workCounts(projectIds: readonly string[]): Record<WorkState,number>; revokeWork(projectId: string): void};
 type WorkflowSummary = OverviewResponse['workflows'][number];
 const compareText = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;
 const compareIds = (left: {id:string}, right: {id:string}): number => compareText(left.id,right.id);
 
 export class ProjectStore {
   private readonly secrets = new Set<string>();
-  constructor(private readonly db: Database.Database, private readonly reader: WorkflowReader,
+  constructor(private readonly db: Database.Database, private readonly reader: StorageReader,
     private readonly pagination: ProjectPagination = new ProjectPagination()) {
     this.db.transaction(() => {
       this.db.prepare('INSERT OR IGNORE INTO workspace_access(id,payload) VALUES (1,?)').run(JSON.stringify({mode:'all_connected',selectedProjectIds:[]}));
@@ -152,6 +154,7 @@ export class ProjectStore {
       .run(projectId,kind,new Date().toISOString(),JSON.stringify(payload));
   }
   private revokeLegacy(projectId: string): void {
+    this.reader.revokeWork(projectId);
     const rows = this.db.prepare("SELECT t.id,t.payload FROM implementation_tasks t JOIN workflows w ON w.id=t.workflow_id WHERE w.project_id=? AND t.state IN ('awaiting_approval','running','interrupted')").all(projectId) as {id:string;payload:string}[];
     for (const row of rows) {
       const binding = JSON.parse(row.payload) as {task:ImplementationTask};
@@ -261,7 +264,7 @@ export class ProjectStore {
       return {item};
     });
   }
-  private validateChildren(workflow: Workflow): void {
+  private validateChildren(workflow: Workflow): Set<string> {
     const completed = new Map<string,number>();
     const active = new Set<string>();
     const graphs = new Map<string,Workflow>([[workflow.id,workflow]]);
@@ -292,6 +295,7 @@ export class ProjectStore {
       return height;
     };
     visit(workflow,0);
+    return new Set(graphs.keys());
   }
   saveWorkflow(projectId: string, input: WorkflowCreateInput): {workflow: Workflow} {
     this.project(projectId);
@@ -352,7 +356,12 @@ export class ProjectStore {
     const workflow = context.workflowId ? this.workflow(context.workflowId) : null;
     if (workflow && workflow.projectId !== project.id) throw new ProjectError(404,'Workflow not found');
     if (workflow ? context.specRevision !== workflow.revision : context.specRevision !== undefined) throw new ProjectError(409,'Stale or missing specification revision');
-    if (item?.workflowId && workflow && item.workflowId !== workflow.id) throw new ProjectError(404,'Workflow not found for item');
+    if (item && workflow && item.workflowId !== workflow.id) {
+      const root = item.workflowId ? this.workflow(item.workflowId) : null;
+      if (!root || root.projectId !== project.id || !this.validateChildren(root).has(workflow.id)) {
+        throw new ProjectError(404,'Workflow not found for item');
+      }
+    }
     const step = context.stepId ? workflow?.steps.find(step => step.id === context.stepId) : null;
     if (context.stepId && !step) throw new ProjectError(404,'Step not found');
     return {project,item:item ?? null,workflow,step:step ?? null};
@@ -438,7 +447,8 @@ export class ProjectStore {
   workspace(input: WorkspaceQuery = {}): WorkspaceResponse {
     return this.db.transaction(() => {
       const query = this.parse(projectSchemas.workspace,input);
-      return {access:this.access(),projects:this.list(),counts:{new:0,understanding:0,queued:0,working:0,checking:0,done:0,needs_decision:0,blocked:0,cancelled:0,superseded:0},
+      const projects = this.list();
+      return {access:this.access(),projects,counts:this.reader.workCounts(projects.map(project => project.id)),
         pendingDecisions:[],connections:[],...(query.management ? {management:this.managementPage(query)} : {})};
     }).deferred();
   }

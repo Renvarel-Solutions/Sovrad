@@ -10,8 +10,10 @@ import {WorkspaceView} from './projects/WorkspaceView';
 import {WorkflowCanvas} from './workflows/WorkflowCanvas';
 import {WorkflowInspector,type ProposalDraft} from './workflows/WorkflowInspector';
 import {useWorkflowNavigation} from './workflows/useWorkflowNavigation';
+import {AnnotationComposer,type AnnotationTarget} from './annotations/AnnotationComposer';
+import {WorkCenter} from './work-items/WorkCenter';
 
-type View = 'workspace'|'overview'|'workflow';
+type View = 'workspace'|'overview'|'workflow'|'work';
 export default function App() {
   const [workspace,setWorkspace]=useState<WorkspaceResponse|null>(null);
   const [projectId,setProjectId]=useState('sample-calculator');
@@ -28,6 +30,8 @@ export default function App() {
   const [management,setManagement]=useState(false);
   const [refreshToken,setRefreshToken]=useState(0);
   const [drafts,setDrafts]=useState<Record<string,ProposalDraft>>({});
+  const [annotationTarget,setAnnotationTarget]=useState<AnnotationTarget|null>(null);
+  const [annotationNotice,setAnnotationNotice]=useState('');
   const navigation=useWorkflowNavigation();
   const workflowId=view==='workflow'&&navigation.current?.projectId===projectId?navigation.current.workflowId:'';
   const activeWorkflow=useRef(workflowId);activeWorkflow.current=workflowId;
@@ -63,7 +67,7 @@ export default function App() {
   },[]);
   useEffect(()=>{
     void refreshWorkspace();
-    const timer=window.setInterval(()=>{if(!workspaceDenied.current)void refreshWorkspace();},15000);
+    const timer=window.setInterval(()=>{if(!workspaceDenied.current)void refreshWorkspace();},5000);
     return()=>{++workspaceRequest.current;window.clearInterval(timer);};
   },[refreshWorkspace]);
   useEffect(()=>{
@@ -85,7 +89,7 @@ export default function App() {
   useEffect(()=>{
     if(!workflowId||denied)return;
     const abort=new AbortController();
-    const timer=window.setInterval(()=>void refreshWorkflow(workflowId,abort.signal),15000);
+    const timer=window.setInterval(()=>void refreshWorkflow(workflowId,abort.signal),5000);
     return()=>{abort.abort();window.clearInterval(timer);};
   },[workflowId,denied,refreshWorkflow]);
   const workflow=detail?.workflow.id===workflowId?detail.workflow:null;
@@ -114,6 +118,14 @@ export default function App() {
   const draft=draftKey&&drafts[draftKey]?drafts[draftKey]:{
     message:'',rules:chosen?.rules.join('\n')??'',explanation:'',baseRevision:workflow?.revision??1,dirty:false,
   };
+  function annotate(scope:'project'|'workflow'|'step'):void {
+    if(!project)return;
+    setAnnotationTarget({text:scope==='step'?draft.message:'',context:{projectId:project.id,mapRevision:project.mapRevision,
+      ...(scope!=='project'&&workflow?{workflowId:workflow.id,specRevision:workflow.revision,
+        ...(navigation.current?.itemId?{itemId:navigation.current.itemId}:{})}:{}),
+      ...(scope==='step'&&chosen?{stepId:chosen.id}:{}),
+    }});
+  }
   return <div className="app-shell">
     <header className="topbar"><div className="brand-logo">S<span>V</span></div>
       <button className="icon-button" onClick={()=>setSidebar(value=>!value)} title="Toggle projects sidebar" aria-label="Toggle projects sidebar" aria-expanded={sidebar}><PanelLeftClose size={17}/></button>
@@ -125,23 +137,30 @@ export default function App() {
         onWorkspace={()=>setView('workspace')} onAdd={()=>setEditor({kind:'project'})} onManage={()=>setManagement(true)}/>}
       <div className="project-area">
         {error&&<div className="error" role="alert">{error}<button className="secondary-button" onClick={()=>void refreshWorkspace()}>Refresh workspace</button></div>}
+        {annotationNotice&&<div className="notice annotation-saved" role="status">{annotationNotice}<button className="text-button" onClick={()=>setAnnotationNotice('')}>Dismiss</button></div>}
         {!workspace&&<div className="loading-view" role="status">Loading workspace…</div>}
-        {workspace&&view==='workspace'&&<WorkspaceView workspace={workspace} onSelect={selectProject}/>}
+        {workspace&&view==='workspace'&&<WorkspaceView workspace={workspace} onSelect={selectProject} onAnnotate={value=>setAnnotationTarget({
+          text:'',context:{projectId:value.id,mapRevision:value.mapRevision},
+        })}/>}
         {workspace&&view!=='workspace'&&project&&<>
           <div className="project-page-head"><nav className="crumb" aria-label="Breadcrumb"><button className="text-button" onClick={()=>setView('workspace')}>Projects</button><span>/</span>
             <button className="text-button" onClick={()=>setView('overview')}>{project.name}</button>
             {view==='workflow'&&navigation.frames.map((frame,index)=><span key={`${frame.workflowId}:${index}`}>/ {frame.name}</span>)}</nav>
             <div className="title-row"><div><h1>{view==='workflow'?(workflow&&workflow.name===chosen?.title?`${workflow.name} workflow`:workflow?.name??navigation.current?.name??'Workflow'):project.name}</h1>
               <p>{view==='workflow'?(workflow?.description??'Loading selected workflow…'):(project.description||'No description yet.')}</p></div>
-              {view==='workflow'&&<div className="rev-pill"><Clock3 size={15}/>Revision {workflow?.revision??'—'}</div>}</div>
+              <div className="item-actions"><button className="secondary-button" onClick={()=>annotate('project')}>Annotate project</button>
+                {view==='workflow'&&<><button className="secondary-button" disabled={!workflow} onClick={()=>annotate('workflow')}>Annotate workflow</button>
+                  <div className="rev-pill"><Clock3 size={15}/>Revision {workflow?.revision??'—'}</div></>}</div></div>
             <nav className="project-tabs" aria-label="Project views">
               <button className={view==='overview'&&projectTab==='overview'?'active':''} onClick={()=>{setView('overview');setProjectTab('overview');}}>Overview</button>
-              <button className={view==='workflow'||projectTab==='workflows'?'active':''} onClick={()=>{setView('overview');setProjectTab('workflows');}}>Workflows</button>
-              <button disabled title="Work tracking is not available yet">Work & results</button><button disabled title="Decision controls are not available yet">Decisions</button><button disabled title="Activity is not available yet">Activity</button>
+              <button className={view==='workflow'||(view==='overview'&&projectTab==='workflows')?'active':''} onClick={()=>{setView('overview');setProjectTab('workflows');}}>Workflows</button>
+              <button className={view==='work'?'active':''} onClick={()=>setView('work')}>Work & results</button><button disabled title="Decision controls are not available yet">Decisions</button><button disabled title="Activity is not available yet">Activity</button>
             </nav>
           </div>
           <ProjectOverview key={projectId} projectId={projectId} active={view==='overview'} workflowTab={projectTab==='workflows'}
             refreshToken={refreshToken} onOpen={openWorkflow} onEdit={setEditor}/>
+          {view==='work'&&<WorkCenter key={projectId} projectId={projectId} refreshToken={refreshToken}
+            onAmend={value=>setAnnotationTarget({context:value.annotation.context,text:value.annotation.text,annotation:value.annotation,work:value.work})}/>}
           {view==='workflow'&&<>
             <div className="workflow-backline">{navigation.frames.length>1?<button className="secondary-button" onClick={navigation.back}><ArrowLeft size={14}/>Back to {navigation.frames.at(-2)?.name}</button>:
               <button className="secondary-button" onClick={()=>setView('overview')}><ArrowLeft size={14}/>Back to project</button>}
@@ -156,7 +175,7 @@ export default function App() {
               </main>
               <WorkflowInspector key={draftKey} workflow={workflow} step={chosen} verification={detail.stepVerification.find(value=>value.stepId===chosen.id)}
                 proposals={detail.proposals} draft={draft} onDraft={value=>setDrafts(previous=>({...previous,[draftKey]:value}))}
-                onRefresh={()=>refreshWorkflow(workflow.id)} onChild={id=>navigation.child(id,'Child workflow')} onSelect={id=>navigation.update({stepId:id})}/>
+                onRefresh={()=>refreshWorkflow(workflow.id)} onChild={id=>navigation.child(id,'Child workflow')} onSelect={id=>navigation.update({stepId:id})} onAnnotate={()=>annotate('step')}/>
             </div>}
             {!workflow&&!workflowError&&<p className="loading-view" role="status">Loading workflow…</p>}
           </>}
@@ -165,5 +184,10 @@ export default function App() {
     </div>
     {editor&&<ProjectEditor key={`${editor.kind}:${'item' in editor?editor.item?.id??'new':''}`} target={editor} onClose={()=>setEditor(null)} onSaved={result=>void saved(result)}/>}
     {management&&<ProjectManagement onClose={()=>setManagement(false)} onChanged={async()=>{setRefreshToken(value=>value+1);await refreshWorkspace();}}/>}
+    {annotationTarget&&<AnnotationComposer target={annotationTarget} onClose={()=>setAnnotationTarget(null)} onSaved={result=>{
+      setAnnotationTarget(null);setRefreshToken(value=>value+1);void refreshWorkspace();
+      setAnnotationNotice(result.annotation.dispatch.mode==='local'?'Annotation kept in Sovrad. View its original text and history in Work & results.':
+        'Instruction recorded. The agent connection is unavailable; work is blocked. View Work & results for details.');
+    }}/>}
   </div>;
 }

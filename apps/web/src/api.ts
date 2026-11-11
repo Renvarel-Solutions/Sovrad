@@ -2,6 +2,7 @@ import type {
   AccessPreference, OverviewFilter, OverviewResponse, ProjectCreateInput, ProjectItem,
   ProjectItemCreateInput, ProjectItemEditInput, ProjectSettingsInput, Proposal,
   RegisteredProject, Workflow, WorkflowCreateInput, WorkflowDetailResponse, WorkspaceQuery, WorkspaceResponse,
+  Annotation, AnnotationInput, AmendWorkInput, WorkItem, WorkDetailResponse, WorkEvent,
 } from '@renvarel/architect-core';
 
 export class APIError extends Error {
@@ -35,6 +36,12 @@ export const api={
   editItem:(id:string,itemId:string,input:ProjectItemEditInput)=>request<{item:ProjectItem}>(`/projects/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}`,postOptions(input)),
   createWorkflow:(id:string,input:WorkflowCreateInput)=>request<{workflow:Workflow}>(`/projects/${encodeURIComponent(id)}/workflows`,postOptions(input)),
   workflow:(id:string,signal?:AbortSignal)=>request<WorkflowDetailResponse>(`/workflows/${encodeURIComponent(id)}`,{signal}),
+  work:(projectId:string,signal?:AbortSignal)=>request<{work:WorkItem[]}>('/work'+query({projectId,limit:50}),{signal}),
+  workDetail:(id:string,signal?:AbortSignal)=>request<WorkDetailResponse>(`/work/${encodeURIComponent(id)}`,{signal}),
+  submitAnnotation:(input:AnnotationInput)=>request<{annotation:Annotation;work:WorkItem}>('/annotations',postOptions(input)),
+  amendWork:(id:string,input:AmendWorkInput)=>request<{annotation:Annotation;work:WorkItem}>(`/work/${encodeURIComponent(id)}/amend`,postOptions(input)),
+  cancelWork:(id:string,input:{clientRequestId:string;expectedVersion:number;reason:string})=>request<{work:WorkItem}>(`/work/${encodeURIComponent(id)}/cancel`,postOptions(input)),
+  workEvents:(id:string,afterSequence=0)=>request<{events:WorkEvent[];nextAfterSequence:number|null}>(`/work/${encodeURIComponent(id)}/events`+query({afterSequence,limit:50})),
   manualProposal:(body:{workflowId:string;stepId:string;baseRevision:number;text:string;proposedRules:string[];explanation:string})=>request<{proposal:Proposal}>('/proposals',postOptions(body)),
   aiProposal:(body:{workflowId:string;stepId:string;baseRevision:number;text:string;sendToAI:true})=>request<{proposal:Proposal}>('/ai/proposal',postOptions(body)),
   decide:(id:string,action:'approve'|'reject')=>request<{proposal:Proposal;workflow:Workflow}>(`/proposals/${encodeURIComponent(id)}/decision`,postOptions({action}))

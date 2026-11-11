@@ -8,9 +8,10 @@ import {backupPath, migrate} from './migrations.js';
 import {ImplementationStore} from './implementation-store.js';
 import {ImportStore} from './import-store.js';
 import {ProjectStore} from './project-store.js';
+import {WorkStore} from './work-store.js';
 import {
   CALCULATOR_PROJECT, CALCULATOR_WORKFLOW, applyApprovedProposal, assertValidWorkflow,
-  type Workflow, type Project, type Proposal
+  type Workflow, type Project, type Proposal, type WorkState,
 } from '@renvarel/architect-core';
 
 export class Storage {
@@ -19,6 +20,7 @@ export class Storage {
   readonly implementation: ImplementationStore;
   readonly imports: ImportStore;
   readonly registry: ProjectStore;
+  readonly work: WorkStore;
   private readonly directory: string;
   constructor(directory = dataDirectory()) {
     directory = validateDataDirectory(directory);
@@ -63,6 +65,7 @@ export class Storage {
       this.seed();
       this.db.prepare('INSERT OR IGNORE INTO workflow_revisions(workflow_id,revision,payload) SELECT id,revision,payload FROM workflows').run();
       this.registry = new ProjectStore(this.db,this);
+      this.work = new WorkStore(this.db,this.registry);
       this.budget = new AIBudget(this.db);
       this.imports = new ImportStore(this.db);
       this.implementation = new ImplementationStore(this.db,directory,(id,revision)=>{
@@ -78,6 +81,8 @@ export class Storage {
     }
   }
   close(): void { this.db.close(); }
+  workCounts(projectIds: readonly string[]): Record<WorkState,number> { return this.work.counts(projectIds); }
+  revokeWork(projectId: string): void { this.work?.revokeProject(projectId); }
   async backup(): Promise<string> {
     const destination = backupPath(this.directory);
     await this.db.backup(destination);
@@ -144,6 +149,7 @@ export class Storage {
       if (action === 'approve') this.db.prepare('INSERT INTO workflow_revisions(workflow_id,revision,payload) VALUES (?,?,?)').run(next.id,next.revision,JSON.stringify(next));
       const updated:Proposal={...proposal,status:action==='approve'?'approved':'rejected'};
       if(action==='approve') this.db.prepare('UPDATE workflows SET revision=?,payload=? WHERE id=? AND revision=?').run(next.revision,JSON.stringify(next),next.id,old.revision);
+      if (action === 'approve') this.revokeWork(next.projectId);
       this.db.prepare('UPDATE proposals SET status=?,payload=? WHERE id=? AND status=?').run(updated.status,JSON.stringify(updated),updated.id,'draft');
       this.db.prepare('INSERT INTO audit_events(id,time,action,workflow_id,base_revision,resulting_revision,proposal_id,specification_json) VALUES (?,?,?,?,?,?,?,?)').run(randomUUID(),new Date().toISOString(),action,old.id,old.revision,action==='approve'?next.revision:null,updated.id,JSON.stringify(next));
       return {proposal:updated,workflow:next};

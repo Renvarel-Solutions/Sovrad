@@ -2,8 +2,8 @@
 
 **See the plan. Approve the change.**
 
-A local visual workspace for reviewing requirements, proposing rule changes and
-approving exact specification revisions. Apache-2.0. Early local preview.
+A local visual workspace for registered projects, workflow maps, contextual notes
+and exact specification review. Apache-2.0. Early local preview.
 
 ## Run on Windows
 
@@ -22,6 +22,27 @@ Browser tests use installed Google Chrome on Windows; on Linux or CI first run
 `npx playwright install chromium --with-deps`.
 Browser tests use separate scratch ports 5175 (web) and 4319 (API), refuse
 occupied scratch ports and use a temporary synthetic database outside source.
+
+## Explore projects and annotate
+
+Open a registered project to review its items and workflows. The overview labels
+loaded rows separately from full matching totals; use Load more or Load all to
+finish a bounded list. Open a workflow in graph or list view, select a stage and
+follow its linked child workflow where one exists. The navigation example is
+fictional and planning-only; its map does not establish runtime verification.
+
+Choose Annotate at project, workflow or stage level, including a nested child
+stage. Review the selected details and save with Keep in Sovrad. Local notes work
+with AI off and never become connected work automatically. Work & results shows
+recent records, their exact original annotation, blockers and event history;
+amendments create a new immutable revision and stopping work retains its history.
+
+Send for help requires fresh consent to the selected material. No agent adapter
+is available in this preview: the request is saved as blocked, with no agent
+interpretation or known acceptance criteria. It does not start an agent. A later
+connected request requires another explicit review and consent. If an amendment
+becomes stale, Refresh selected context preserves the draft and requires review
+and renewed consent before sending.
 
 ## Try the calculator workflow
 
@@ -97,13 +118,12 @@ approved repository commit and enforced sandbox/command approvals.
 
 External repository import is also disabled: its HTTP submission route refuses
 capture. Internal snapshot helpers are tested with synthetic repositories; this
-does not establish a private-project import. The shipped UI remains the calculator
-workflow and budget panel; multi-project dashboards, annotations and an owner
-decision center are not implemented.
+does not establish a private-project import. Decision actions, owner sessions,
+native/app-host agent connections and runtime-evidence integration remain future
+work. No live lead-agent controller is available.
 
-The backend now supports an explicit private project registry, planning items,
-creation-only workflow/child maps and separate layout overlays. These API
-foundations do not add dashboard controls to the current UI. Registering a
+The project UI uses the private registry, planning items, creation-only
+workflow/child maps and separate layout overlays. Registering a
 repository candidate stores private pending metadata; it does not read source
 or discover projects. Keep candidate paths and project data outside public source.
 Grant changes through HTTP remain blocked until local action sessions exist.
@@ -111,12 +131,13 @@ See [architecture](docs/ARCHITECTURE.md) for pagination and authority contracts.
 
 ## Structure and quality
 
-- apps/web: React, React Flow, inspector and proposal review.
-- apps/api: local Fastify API, SQLite history and opt-in AI drafting.
+- apps/web: React, React Flow, project views, inspector, annotations and
+  work-items/ work history.
+- apps/api: local Fastify API, SQLite registry and work history, opt-in AI drafting.
 - apps/runner: task manifests, synthetic repository checks and a diagnostic-only
   protocol client; native coding remains blocked.
 - packages/core: workflow model and revision-safe approval logic.
-- tests/e2e: real-browser approval and API-process restart checks.
+- tests/e2e: real-browser project, navigation, annotation, approval and restart checks.
 - scripts: publication scanner and its regression tests.
 - docs: architecture, runner gates and observed verification status.
 

@@ -40,3 +40,27 @@ test('edited selected field changes digest but layout does not', async () => {
   assert.equal(await core.digestSelectedAnnotationMaterial(build('Sample',[{x:900,y:12}])),hash);
   assert.notEqual(await core.digestSelectedAnnotationMaterial(build('Changed',[])),hash);
 });
+
+test('builder projects exact child identities while server owns mapped-root descendant reachability', () => {
+  const item = {id:'parent-item',projectId:'p',parentId:null,kind:'workflow',name:'Parent mapped item',description:'Selected parent',
+    development:'planning',workflowId:'parent-root'};
+  const step = {...core.CALCULATOR_WORKFLOW.steps[0],id:'child-step',inputs:['value'],outputs:['reviewed']};
+  const workflow = {...core.CALCULATOR_WORKFLOW,id:'selected-child',projectId:'p',revision:2,steps:[step]};
+  const selectedDraft = {...draft,context:{projectId:'p',itemId:item.id,workflowId:workflow.id,stepId:step.id,specRevision:2,mapRevision:1}};
+  const input = {draft:selectedDraft,project,item,workflow,step};
+  const material = core.buildSelectedAnnotationMaterial(input);
+  assert.deepEqual(material.context,{projectId:'p',itemId:'parent-item',workflowId:'selected-child',stepId:'child-step',specRevision:2,mapRevision:1});
+  assert.deepEqual(material.selection.item,{id:'parent-item',name:'Parent mapped item',description:'Selected parent'});
+  assert.equal(material.selection.workflow.id,'selected-child');
+  assert.equal(material.selection.step.id,'child-step');
+  assert.equal(material.text,draft.text);
+  assert.equal(material.target,draft.target);
+  for (const invalid of [
+    {...input,item:{...item,projectId:'foreign'}},
+    {...input,workflow:{...workflow,projectId:'foreign'}},
+    {...input,draft:{...selectedDraft,context:{...selectedDraft.context,itemId:'other-item'}}},
+    {...input,draft:{...selectedDraft,context:{...selectedDraft.context,workflowId:'other-workflow'}}},
+    {...input,draft:{...selectedDraft,context:{...selectedDraft.context,stepId:'other-step'}}},
+    {...input,workflow:{...workflow,steps:[]}},
+  ]) assert.throws(() => core.buildSelectedAnnotationMaterial(invalid),/Invalid selected context/);
+});
