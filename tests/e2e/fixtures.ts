@@ -6,7 +6,10 @@ import {createServer} from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
+import {randomUUID} from 'node:crypto';
 import type {RegisteredProject, ProjectItem, Workflow} from '@renvarel/architect-core';
+import type {ExperienceCommand,ExperienceCommandResult,ExperienceFixtureEnvelope,ExperienceIPCResponse,ExperienceSnapshot} from './experience-contract.js';
+export type {ExperienceCommand,ExperienceCommandResult,ExperienceFixtureEnvelope,ExperienceSnapshot} from './experience-contract.js';
 
 export const root = path.resolve(import.meta.dirname, '../..');
 export const actionHeaders = {'X-Sovrad-Action':'1', Origin:'http://127.0.0.1:5175'};
@@ -26,6 +29,9 @@ export class ScratchServers {
   api: ChildProcess | undefined;
   private web: ChildProcess | undefined;
   private logs = '';
+  private apiDirectory=this.directory;
+  private experienceMode=false;
+  private readonly ipcRequests=new Map<string,{resolve:(result:ExperienceCommandResult)=>void;reject:(error:Error)=>void;timeout:ReturnType<typeof setTimeout>}>();
   private readonly profile = path.join(this.directory, 'empty-profile');
   private readonly env = {
     ...Object.fromEntries(['PATH','SystemRoot','WINDIR','COMSPEC','PATHEXT','TEMP','TMP','CI']
@@ -34,10 +40,18 @@ export class ScratchServers {
     CODEX_HOME:this.profile, SOVRAD_DATA_DIR:this.directory, SOVRAD_AI_ENABLED:'false',
     SOVRAD_AI_HARD_LIMIT_CONFIRMED:'false', OPENAI_API_KEY:'', WEB_PORT:'5175', API_PORT:'4319',
   };
-  private launch(args: string[]): ChildProcess {
-    const child = spawn(process.execPath,args,{cwd:root,env:this.env,stdio:['ignore','pipe','pipe'],windowsHide:true});
+  private launch(args: string[],experience=false): ChildProcess {
+    const child = spawn(process.execPath,args,{cwd:root,env:{...this.env,SOVRAD_DATA_DIR:this.apiDirectory},stdio:experience?['ignore','pipe','pipe','ipc']:['ignore','pipe','pipe'],windowsHide:true});
     child.stdout?.on('data',data => { this.logs += String(data); });
     child.stderr?.on('data',data => { this.logs += String(data); });
+    if(experience){
+      child.on('message',(message:ExperienceIPCResponse)=>{
+        const pending=this.ipcRequests.get(message.id);if(!pending)return;
+        clearTimeout(pending.timeout);this.ipcRequests.delete(message.id);
+        if(message.ok)pending.resolve(message.result);else pending.reject(new Error(message.error));
+      });
+      child.once('exit',()=>{for(const pending of this.ipcRequests.values()){clearTimeout(pending.timeout);pending.reject(new Error('Owned synthetic API exited.'));}this.ipcRequests.clear();});
+    }
     return child;
   }
   private async stop(child: ChildProcess | undefined): Promise<void> {
@@ -60,7 +74,7 @@ export class ScratchServers {
       });
     }
     mkdirSync(this.profile,{recursive:true});
-    this.api = this.launch(['--import','tsx','apps/api/src/server.ts']);
+    this.api = this.launch(['--import','tsx',this.experienceMode?'tests/e2e/experience-fixture-server.ts':'apps/api/src/server.ts'],this.experienceMode);
     this.web = this.launch(['node_modules/vite/bin/vite.js','--config','apps/web/vite.config.ts','apps/web']);
     await this.ready('http://127.0.0.1:4319/api/health');
     await this.ready('http://127.0.0.1:5175');
@@ -71,9 +85,36 @@ export class ScratchServers {
     await expect.poll(async () => {
       try { await fetch('http://127.0.0.1:4319/api/health'); return true; } catch { return false; }
     }).toBe(false);
-    this.api = this.launch(['--import','tsx','apps/api/src/server.ts']);
+    this.api = this.launch(['--import','tsx',this.experienceMode?'tests/e2e/experience-fixture-server.ts':'apps/api/src/server.ts'],this.experienceMode);
     await this.ready('http://127.0.0.1:4319/api/health');
     return {previousPID,nextPID:this.api.pid};
+  }
+  async ensureDefaultMode():Promise<void> {
+    if(!this.experienceMode)return;
+    this.apiDirectory=this.directory;this.experienceMode=false;
+    await this.restartAPI();
+  }
+  async startExperience():Promise<ExperienceFixtureEnvelope> {
+    if(!this.web)await this.start();
+    await this.stop(this.api);
+    this.apiDirectory=mkdtempSync(path.join(this.directory,'experience-'));this.experienceMode=true;
+    this.api=this.launch(['--import','tsx','tests/e2e/experience-fixture-server.ts'],true);
+    await this.ready('http://127.0.0.1:4319/api/health');
+    const snapshot=await this.experienceChange({kind:'snapshot'});
+    if(snapshot.kind!=='snapshot')throw new Error('Invalid synthetic fixture readiness response.');
+    if(snapshot.fixture.pendingTotal!==125||snapshot.workspace.pendingDecisionCount!==125)throw new Error('Synthetic decision baseline is incomplete.');
+    return snapshot.fixture;
+  }
+  async experienceChange(input:{kind:'snapshot'}):Promise<ExperienceSnapshot>;
+  async experienceChange(input:ExperienceCommand):Promise<ExperienceCommandResult>;
+  async experienceChange(input:ExperienceCommand):Promise<ExperienceCommandResult> {
+    const child=this.api;if(!this.experienceMode||!child?.connected)throw new Error('The owned synthetic experience API is not running.');
+    const id=randomUUID();
+    return new Promise((resolve,reject)=>{
+      const timeout=setTimeout(()=>{this.ipcRequests.delete(id);reject(new Error('Synthetic fixture command timed out.'));},15_000);
+      this.ipcRequests.set(id,{resolve,reject,timeout});
+      child.send({id,command:input},error=>{if(error){clearTimeout(timeout);this.ipcRequests.delete(id);reject(new Error('Synthetic fixture command could not be sent.'));}});
+    });
   }
   async close(): Promise<void> {
     await this.stop(this.web);
@@ -81,7 +122,7 @@ export class ScratchServers {
     rmSync(this.directory,{recursive:true,force:true});
   }
   seedComplete(project: RegisteredProject, crossPage = false): void {
-    const db = new Database(path.join(this.directory,'sovrad.sqlite'));
+    const db = new Database(path.join(this.apiDirectory,'sovrad.sqlite'));
     try {
       db.transaction(() => {
         for (let i = 106; i >= 0; i--) {
@@ -110,7 +151,11 @@ export class ScratchServers {
   }
 }
 
-export const test = base.extend<{}, {servers:ScratchServers}>({
+export const test = base.extend<{defaultMode:void}, {servers:ScratchServers}>({
+  defaultMode:[async ({servers},use) => {
+    await servers.ensureDefaultMode();
+    await use();
+  },{auto:true}],
   servers:[async ({},use) => {
     const servers = new ScratchServers();
     try { await servers.start(); await use(servers); } finally { await servers.close(); }

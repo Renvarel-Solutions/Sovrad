@@ -1,10 +1,11 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
-import type {WorkDetailResponse,WorkItem} from '@renvarel/architect-core';
+import type {Decision,WorkDetailResponse,WorkItem} from '@renvarel/architect-core';
 import {api,APIError} from '../api';
 import {WorkDetail,workStateLabel} from './WorkDetail';
 
-export function WorkCenter({projectId,onAmend,refreshToken}:{
+export function WorkCenter({projectId,onAmend,refreshToken,onDecision}:{
   projectId:string;onAmend:(detail:WorkDetailResponse)=>void;refreshToken:number;
+  onDecision:(decision:Decision)=>void;
 }) {
   const [work,setWork]=useState<WorkItem[]>([]);
   const [selected,setSelected]=useState('');
@@ -65,6 +66,6 @@ export function WorkCenter({projectId,onAmend,refreshToken}:{
     </article>)}</div>
     {detailError&&<div className="error" role="alert">{detailError}{!stopped.current.detail&&<button className="secondary-button" onClick={()=>void refreshDetail()}>Retry work detail</button>}</div>}
     {selected&&!detail&&!detailError&&<p role="status">Loading original annotation and history…</p>}
-    {detail&&<WorkDetail key={detail.work.id} detail={detail} onAmend={onAmend} onRefresh={async()=>{await refreshDetail();await refresh();}}/>}
+    {detail&&<WorkDetail key={detail.work.id} detail={detail} onAmend={onAmend} onDecision={onDecision} onRefresh={async()=>{await refreshDetail();await refresh();}}/>}
   </main>;
 }

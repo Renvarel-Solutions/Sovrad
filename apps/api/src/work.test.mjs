@@ -228,8 +228,9 @@ test('future notes are not automatically promoted and read-only instructions can
   const captured = [];
   const controller = await fakeController(f.storage, captured, {kind:'implementation', summary:'Implement this.', acceptance:[{id:'untrusted-id', description:'Fictional acceptance.'}], ruleIds:[]});
   await controller.dispatchPending(future.work.id);
-  assert.equal(captured.length, 0);
+  assert.equal(captured.length, 1,'Fresh-consented future planning may be interpreted without receiving runtime authority.');
   assert.equal((await get(f.app, `/api/work/${future.work.id}`)).json().work.state, 'blocked');
+  assert.equal(f.db.prepare('SELECT count(*) AS n FROM execution_bindings').get().n,0);
   f.storage.registry.setGrant('sample-calculator', {expectedGrantRevision:1, grant:'read_only'});
   const instruction = await submit(f, await draft(f.storage, {intent:'instruction', dispatch:{mode:'connected', consent:true}}));
   await controller.dispatchPending(instruction.work.id);

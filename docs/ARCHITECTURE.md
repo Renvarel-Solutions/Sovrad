@@ -1,8 +1,10 @@
 # Sovrad architecture
 
-Developer reference for the local source, reviewed 2026-11-11 (package 0.1.0).
+Developer reference for the local source, reviewed 2026-11-16 (package 0.1.0).
 The browser provides registered-project views, workflow navigation, contextual
-annotations, work history and the original calculator proposal/budget controls.
+annotations, work history, decision review, evidence and connection status, plus
+the original calculator proposal/budget controls. These changes remain local and
+unpublished beyond the public foundation.
 
 React/Vite defaults to 127.0.0.1:5173 and proxies `/api` to Fastify on
 127.0.0.1:4317. `WEB_PORT` and `API_PORT` configure these together.
@@ -33,18 +35,26 @@ revisions. Item edits cannot reparent or relink existing maps. Shared child grap
 have cycle, depth and total-work limits. The fictional navigation sample is
 separate from the calculator's original specification/history.
 
-Schema 5 adds immutable annotations and their canonical material JSON/digests,
+Schema 5 added immutable annotations and their canonical material JSON/digests,
 consent receipts, versioned work records, ordered events, idempotency results and
 an outbox. `WorkStore` in `work-store.ts` owns these records; user content remains
 in the private SQLite directory outside public source.
+
+Schema 6 adds decisions and immutable resolution receipts, hashed local owner
+sessions, connections, frozen execution bindings and controller leases. It adds
+ordered evidence sequences and distinguishes interpretation/runtime outbox phases.
+These additive records preserve existing annotations, history and spending;
+`migrate` uses a consistent snapshot including committed WAL data for the
+pre-upgrade backup. See [migrations.ts](../apps/api/src/migrations.ts) and its
+historical-schema fixtures in [migrations.test.mjs](../apps/api/src/migrations.test.mjs).
 
 ## Registry API and authority
 
 `project-routes.ts`, `work-routes.ts` and legacy routes preserve project access
 boundaries. Accessible project/workflow reads and their
 HEAD variants enforce selection and archival boundaries. Access selection never
-widens grants. Grant-bearing HTTP settings requests return 503 with
-`LOCAL_SESSION_UNAVAILABLE` until real local action sessions exist. Only the
+widens grants. Grant-bearing HTTP settings requests require a current local owner
+cookie; metadata-only settings retain their separate access checks. Only the
 fixed sample calculator workflow with `synthetic_execute` can create, approve or
 start legacy implementation tasks. In `server.ts`, the `preHandler` resolves the
 task's workflow and applies project visibility to task reads, events and cancel;
@@ -68,13 +78,16 @@ registered archived/unselected choices for selection/restoration. It returns no
 paths, maps or source and performs no desktop-project discovery. Normal workspace
 visibility stays unchanged. Repository candidates remain inert private pending
 metadata; their paths are omitted from responses and no source is inspected.
+The wire value `all_connected` means all registered Sovrad projects; selection
+can narrow that set. Neither mode discovers Codex Desktop projects.
 
 Shared experience DTOs live in `packages/core/src/experience.ts`.
 `annotation-material.ts` defines canonical selected-material serialization and
 WebCrypto hashing shared by the annotation composer and API.
-`verification-projection.ts` distinguishes current bound
-runtime evidence from historical/unbound evidence. Current registry projections
-honestly return `not_checked`/`unknown`: no runtime evidence authority exists yet.
+`verification-projection.ts` distinguishes current bound runtime evidence from
+historical/unbound evidence. Ordinary production work has no trusted runtime
+authority and remains `not_checked`/`unknown`; synthetic fixtures exercise the
+bound evidence states described below.
 
 Approval uses one immediate transaction for revision validation, the new
 snapshot, current workflow, proposal status and audit event. Stale or resolved
@@ -88,7 +101,8 @@ GET `/api/work/:id`, POST `/api/work/:id/amend`, POST `/api/work/:id/cancel` and
 GET `/api/work/:id/events`. Lists are bounded, defaulting to 50 and capped at 100;
 the events route supports `afterSequence`. Detail returns
 `WorkDetailResponse.annotation` directly from `work.annotationId`, not from a
-bounded annotation list. Evidence and decision arrays are currently empty.
+bounded annotation list. The detail also returns related evidence, decisions and
+the current verification projection.
 
 `WorkController.submitAnnotation` and `amendWork` build and hash selected material
 asynchronously. An immediate transaction rechecks context, authority and material
@@ -123,6 +137,72 @@ fetches the latest work version and context while preserving edited fields and
 resetting consent. Polling preserves drafts; semantic/payload changes invalidate
 consent while layout-only changes do not. The public `work-items/` source folder
 is distinct from the ignored private `work/` directory.
+
+## Local decisions, sessions and evidence
+
+[registerConnections](../apps/api/src/connection-routes.ts) exposes GET
+`/api/local-session`. `LocalSessionStore.bootstrap` reuses a current cookie or
+creates a 30-minute replacement with HttpOnly, SameSite=Strict and Path=/api.
+Only the token hash is stored in SQLite; the raw token is carried and stored in
+the HttpOnly browser cookie and is not exposed to browser JavaScript, Web Storage,
+JSON responses or logs. The generated HEAD handler returns without minting a session.
+This is a loopback local-owner action boundary, not an identity provider or
+remote-user authentication. Decision, connection and grant mutations require it;
+invalid or expired cookies return 403 `LOCAL_SESSION_REQUIRED`.
+
+[registerDecisions](../apps/api/src/decision-routes.ts) exposes GET
+`/api/decisions`, POST `/api/decisions/:id/action`, GET `/api/evidence` and GET
+`/api/activity`. Lists are scoped to accessible projects and support bounded
+sequence pagination. The decision list includes a view digest so the browser can
+refresh a changed list rather than join incompatible pages. No public route
+creates a decision, installs runtime authority or records runtime evidence.
+
+`DecisionStore.create` freezes the proposal digest, context, specification/map/
+grant revisions, permission scope, expiry, cost cap and applicable work/material
+identity. `resolve` rechecks the frozen request and current session in an immediate
+transaction. Approve, reject and request-revision actions retain an immutable
+receipt with the local session, action and reason. An exact idempotent action replay
+returns the current reconciled Decision status/version with the original immutable
+receipt and no second action effect; reusing the key with different content is
+rejected. Changes or expiry supersede or
+expire authority. Resolving a work decision leaves that work blocked and revokes
+pending dispatch; approval launches nothing.
+
+`DecisionDetail` presents the action and reason for escalation, expected result,
+direct and indirect effects, uncertainties, one-time/ongoing cost and payer,
+failure/interruption/detection, recovery/backup/irreversibility, alternatives,
+recommendation, scope and expiry. `DecisionCenter` and `useDecisions` keep review
+and pagination bound to the current selection. Changed requests require refresh;
+expired sessions require renewal and another action choice, not automatic replay.
+These components use real stores with synthetic fixtures. Production has no
+supported adapter to create new agent requests.
+
+`ConnectionStore` retains Codex and ChatGPT inventory entries as `unavailable`
+with empty capabilities. With a valid local session, Connect returns 503
+`CONNECTION_UNAVAILABLE`; Disconnect returns 200 and revokes dependent pending or
+claimed dispatch. Neither performs provider login or establishes readiness, and
+reconnecting does not restore revoked permission.
+
+`ExperienceContext.runtime` requires a constructor-supplied trusted authority
+reader, exact connected consent, approved specification receipt, synthetic
+execution grant and matching manifest/acceptance snapshot. Normal `Storage`
+supplies no reader. `ExecutionBindingStore` exercises frozen one-use bindings,
+attempt/fence checks, bounded leases and interruption revocation in synthetic
+tests; those mechanisms do not establish a native execution sandbox. There is no
+HTTP/config switch for this authority or the interpreter adapter.
+
+`EvidenceStore` retains source class/revision, environment, check time, acceptance
+identity and binding provenance. Only current bound `test_runtime` coverage for
+every frozen acceptance, together with successful runtime completion, can project
+`verified`. Knowledge, plans and observed code cannot supply acceptance coverage;
+revoked bindings retain historical evidence. `EvidencePanel` displays provenance,
+freshness and the absence of observed deployment. No live runtime is connected.
+
+The canonical surface contract in
+[endpoint-security.test.mjs](../apps/api/src/endpoint-security.test.mjs) checks
+every literal route and generated HEAD variant against valid synthetic fixtures,
+including local boundaries and session prerequisites. Use it as the route
+inventory instead of maintaining a second route count here.
 
 ## AI boundary
 

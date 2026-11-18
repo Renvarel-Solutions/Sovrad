@@ -9,6 +9,8 @@ import {containsPrivateContent} from './privacy.js';
 import {ProjectError} from './project-store.js';
 import {projectFailure, registerProjects} from './project-routes.js';
 import {registerWork} from './work-routes.js';
+import {registerDecisions} from './decision-routes.js';
+import {registerConnections} from './connection-routes.js';
 
 const manualSchema = z.object({
   workflowId: z.string().min(1).max(100), stepId: z.string().min(1).max(100),
@@ -118,11 +120,14 @@ export function buildApp(storage: Storage, options: {port?: number; webPort?: nu
     const {id} = z.object({id: z.string()}).parse(req.params);
     const workflow = storage.workflow(id);
     if (!workflow) return reply.code(404).send({error: 'Workflow not found'});
-    return {workflow, proposals: storage.proposals(id), history: storage.history(id),
-      layout:storage.registry.layout(id),stepVerification:storage.registry.stepVerification(workflow)};
+    return storage.experienceRead(()=>({workflow, proposals: storage.proposals(id), history: storage.history(id),
+      layout:storage.registry.layout(id),stepVerification:storage.registry.stepVerification(workflow),
+      pendingDecisionCount:storage.decisions.pending({workflowId:id}).length}));
   });
   registerProjects(app,storage);
   registerWork(app,storage);
+  registerDecisions(app,storage);
+  registerConnections(app,storage);
   registerProposals(app, storage, ai.apiKey);
   registerAI(app, storage, ai);
   registerImplementation(app, storage);

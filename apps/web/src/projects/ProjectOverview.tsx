@@ -5,9 +5,10 @@ import type {EditorTarget} from './ProjectEditor';
 import {verificationLabel} from '../workflows/WorkflowList';
 
 export const developmentLabels:Record<DevelopmentState,string>={planning:'Planning',implementation:'Being implemented',future:'Future scope',implemented:'Implemented'};
-export function ProjectOverview({projectId,active,workflowTab,refreshToken,onOpen,onEdit}:{
+export function ProjectOverview({projectId,active,workflowTab,refreshToken,onOpen,onEdit,onDecisions}:{
   projectId:string;active:boolean;workflowTab:boolean;refreshToken:number;
   onOpen:(workflowId:string,name:string,itemId:string|null)=>void;onEdit:(target:EditorTarget)=>void;
+  onDecisions:()=>void;
 }) {
   const [query,setQuery]=useState('');
   const [development,setDevelopment]=useState<DevelopmentState|''>('');
@@ -26,6 +27,8 @@ export function ProjectOverview({projectId,active,workflowTab,refreshToken,onOpe
         <span className="verification-badge">{verificationLabel(data.totals.verification)}</span>
         <button className="secondary-button" onClick={()=>onEdit({kind:'settings',project})}>Edit project</button></div>
       <p className="helper">{project.sourceState==='unmapped'?'Source is unmapped. This planning map does not establish source coverage.':'Source status is reported by the registry. Checked behavior needs separate evidence.'}</p>
+      <button className="secondary-button" onClick={onDecisions}>Needs your decision {data.pendingDecisionCount}</button>
+      <section aria-label="Verification summary" className="summary-counts">{Object.entries(data.totals.verificationCounts).map(([state,count])=><span key={state} data-verification={state}>{verificationLabel(state as Parameters<typeof verificationLabel>[0])}: {count}</span>)}</section>
       <div className="summary-counts" aria-label="Complete filtered totals">
         {Object.entries(data.totals.counts).map(([state,count])=><span key={state}>{developmentLabels[state as DevelopmentState]}: <b>{count}</b></span>)}
         <span>Not yet checked steps: <b>{data.totals.verificationCounts.not_checked}</b></span>

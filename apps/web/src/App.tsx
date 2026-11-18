@@ -1,6 +1,6 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
 import {ArrowLeft,Clock3,LockKeyhole,PanelLeftClose} from 'lucide-react';
-import type {RegisteredProject,WorkflowDetailResponse,WorkspaceResponse} from '@renvarel/architect-core';
+import type {Decision,RegisteredProject,WorkflowDetailResponse,WorkspaceResponse} from '@renvarel/architect-core';
 import {api,APIError} from './api';
 import {ProjectSidebar} from './projects/ProjectSidebar';
 import {ProjectOverview} from './projects/ProjectOverview';
@@ -12,8 +12,9 @@ import {WorkflowInspector,type ProposalDraft} from './workflows/WorkflowInspecto
 import {useWorkflowNavigation} from './workflows/useWorkflowNavigation';
 import {AnnotationComposer,type AnnotationTarget} from './annotations/AnnotationComposer';
 import {WorkCenter} from './work-items/WorkCenter';
+import {DecisionCenter,type DecisionTarget} from './decisions/DecisionCenter';
 
-type View = 'workspace'|'overview'|'workflow'|'work';
+type View = 'workspace'|'overview'|'workflow'|'work'|'decisions';
 export default function App() {
   const [workspace,setWorkspace]=useState<WorkspaceResponse|null>(null);
   const [projectId,setProjectId]=useState('sample-calculator');
@@ -32,6 +33,8 @@ export default function App() {
   const [drafts,setDrafts]=useState<Record<string,ProposalDraft>>({});
   const [annotationTarget,setAnnotationTarget]=useState<AnnotationTarget|null>(null);
   const [annotationNotice,setAnnotationNotice]=useState('');
+  const [decisionTarget,setDecisionTarget]=useState<DecisionTarget|null>(null);
+  const [decisionDrafts,setDecisionDrafts]=useState<Record<string,{projectId:string;value:string}>>({});
   const navigation=useWorkflowNavigation();
   const workflowId=view==='workflow'&&navigation.current?.projectId===projectId?navigation.current.workflowId:'';
   const activeWorkflow=useRef(workflowId);activeWorkflow.current=workflowId;
@@ -39,6 +42,23 @@ export default function App() {
   const workspaceRequest=useRef(0);
   const workspaceDenied=useRef(false);
   const project=workspace?.projects.find(value=>value.id===projectId);
+  const visibleProjectIds=workspace?.projects.map(value=>value.id)??[];
+  const visibilityKey=JSON.stringify(visibleProjectIds);
+  useEffect(()=>{
+    if(!workspace)return;
+    const allowed=new Set(visibleProjectIds);
+    setDecisionDrafts(previous=>{
+      const retained=Object.entries(previous).filter(([,draft])=>allowed.has(draft.projectId));
+      return retained.length===Object.keys(previous).length?previous:Object.fromEntries(retained);
+    });
+    setDecisionTarget(previous=>{
+      if(!previous)return previous;
+      if(previous.scope.projectId&&!allowed.has(previous.scope.projectId))return null;
+      if(previous.decision&&!allowed.has(previous.decision.projectId))return {scope:previous.scope};
+      return previous;
+    });
+  },[visibilityKey]);
+  useEffect(()=>{void api.bootstrapSession().catch(()=>{});},[]);
 
   const refreshWorkspace=useCallback(async():Promise<void>=>{
     const id=++workspaceRequest.current;
@@ -100,9 +120,11 @@ export default function App() {
     }
   },[workflow?.id,workflow?.name,chosen?.id,navigation.current?.stepId,navigation.current?.name,navigation.update]);
   function selectProject(id:string):void {
+    setDecisionTarget(null);
     setProjectId(id);setView('overview');setProjectTab('overview');navigation.clear();setDetail(null);setList(false);
   }
   function openWorkflow(id:string,name:string,itemId:string|null):void {
+    setDecisionTarget(null);
     const retained=navigation.current?.workflowId===id&&navigation.current.projectId===projectId&&navigation.current.itemId===itemId?navigation.current:null;
     navigation.open(retained??{projectId,itemId,workflowId:id,name,stepId:''});setView('workflow');setList(false);
   }
@@ -118,6 +140,23 @@ export default function App() {
   const draft=draftKey&&drafts[draftKey]?drafts[draftKey]:{
     message:'',rules:chosen?.rules.join('\n')??'',explanation:'',baseRevision:workflow?.revision??1,dirty:false,
   };
+  function openDecision(decision:Decision):void {
+    setDecisionTarget({scope:{projectId:decision.projectId,workflowId:decision.context.workflowId,stepId:decision.context.stepId},decision});
+  }
+  function forgetDecision(projectId:string,decisionId?:string):void {
+    setDecisionDrafts(previous=>Object.fromEntries(Object.entries(previous).filter(([id,draft])=>decisionId?id!==decisionId:draft.projectId!==projectId)));
+    setDecisionTarget(previous=>{
+      if(!previous)return previous;
+      if(!decisionId&&previous.scope.projectId===projectId)return null;
+      if(previous.decision&&(decisionId?previous.decision.id===decisionId:previous.decision.projectId===projectId))return {scope:previous.scope};
+      return previous;
+    });
+  }
+  async function experienceChanged():Promise<void> {
+    await refreshWorkspace();setRefreshToken(value=>value+1);
+    if(activeWorkflow.current)await refreshWorkflow(activeWorkflow.current);
+  }
+  function projectView(next:View):void {setDecisionTarget(null);setView(next);}
   function annotate(scope:'project'|'workflow'|'step'):void {
     if(!project)return;
     setAnnotationTarget({text:scope==='step'?draft.message:'',context:{projectId:project.id,mapRevision:project.mapRevision,
@@ -130,16 +169,17 @@ export default function App() {
     <header className="topbar"><div className="brand-logo">S<span>V</span></div>
       <button className="icon-button" onClick={()=>setSidebar(value=>!value)} title="Toggle projects sidebar" aria-label="Toggle projects sidebar" aria-expanded={sidebar}><PanelLeftClose size={17}/></button>
       <div className="brand-copy"><b>Sovrad</b><span>by Renvarel</span></div><div className="topbar-spacer"/>
+      <button className="secondary-button global-decision-count" onClick={()=>{setDecisionTarget({scope:{}});setView('decisions');}}>Needs your decision {workspace?.pendingDecisionCount??0}</button>
       <span className="small-status">Local workspace</span><span className="privacy-pill"><LockKeyhole size={13}/>Private project data</span>
     </header>
     <div className="workspace">
       {sidebar&&<ProjectSidebar workspace={workspace} selected={view==='workspace'?'':projectId} onSelect={selectProject}
-        onWorkspace={()=>setView('workspace')} onAdd={()=>setEditor({kind:'project'})} onManage={()=>setManagement(true)}/>}
+        onWorkspace={()=>projectView('workspace')} onAdd={()=>setEditor({kind:'project'})} onManage={()=>setManagement(true)}/>}
       <div className="project-area">
         {error&&<div className="error" role="alert">{error}<button className="secondary-button" onClick={()=>void refreshWorkspace()}>Refresh workspace</button></div>}
         {annotationNotice&&<div className="notice annotation-saved" role="status">{annotationNotice}<button className="text-button" onClick={()=>setAnnotationNotice('')}>Dismiss</button></div>}
         {!workspace&&<div className="loading-view" role="status">Loading workspace…</div>}
-        {workspace&&view==='workspace'&&<WorkspaceView workspace={workspace} onSelect={selectProject} onAnnotate={value=>setAnnotationTarget({
+        {workspace&&view==='workspace'&&<WorkspaceView workspace={workspace} onChanged={experienceChanged} onSelect={selectProject} onAnnotate={value=>setAnnotationTarget({
           text:'',context:{projectId:value.id,mapRevision:value.mapRevision},
         })}/>}
         {workspace&&view!=='workspace'&&project&&<>
@@ -152,14 +192,15 @@ export default function App() {
                 {view==='workflow'&&<><button className="secondary-button" disabled={!workflow} onClick={()=>annotate('workflow')}>Annotate workflow</button>
                   <div className="rev-pill"><Clock3 size={15}/>Revision {workflow?.revision??'—'}</div></>}</div></div>
             <nav className="project-tabs" aria-label="Project views">
-              <button className={view==='overview'&&projectTab==='overview'?'active':''} onClick={()=>{setView('overview');setProjectTab('overview');}}>Overview</button>
-              <button className={view==='workflow'||(view==='overview'&&projectTab==='workflows')?'active':''} onClick={()=>{setView('overview');setProjectTab('workflows');}}>Workflows</button>
-              <button className={view==='work'?'active':''} onClick={()=>setView('work')}>Work & results</button><button disabled title="Decision controls are not available yet">Decisions</button><button disabled title="Activity is not available yet">Activity</button>
+              <button className={view==='overview'&&projectTab==='overview'?'active':''} onClick={()=>{projectView('overview');setProjectTab('overview');}}>Overview</button>
+              <button className={view==='workflow'||(view==='overview'&&projectTab==='workflows')?'active':''} onClick={()=>{projectView('overview');setProjectTab('workflows');}}>Workflows</button>
+              <button className={view==='work'?'active':''} onClick={()=>projectView('work')}>Work & results</button><button onClick={()=>{setView('decisions');setDecisionTarget({scope:{projectId}});}}>Decisions</button><button disabled title="Activity is not available yet">Activity</button>
             </nav>
           </div>
-          <ProjectOverview key={projectId} projectId={projectId} active={view==='overview'} workflowTab={projectTab==='workflows'}
-            refreshToken={refreshToken} onOpen={openWorkflow} onEdit={setEditor}/>
-          {view==='work'&&<WorkCenter key={projectId} projectId={projectId} refreshToken={refreshToken}
+          <ProjectOverview key={`overview:${projectId}`} projectId={projectId} active={view==='overview'} workflowTab={projectTab==='workflows'}
+            refreshToken={refreshToken} onOpen={openWorkflow} onEdit={setEditor} onDecisions={()=>{setView('decisions');setDecisionTarget({scope:{projectId}});}}/>
+          {view==='work'&&<WorkCenter key={`work:${projectId}`} projectId={projectId} refreshToken={refreshToken}
+            onDecision={openDecision}
             onAmend={value=>setAnnotationTarget({context:value.annotation.context,text:value.annotation.text,annotation:value.annotation,work:value.work})}/>}
           {view==='workflow'&&<>
             <div className="workflow-backline">{navigation.frames.length>1?<button className="secondary-button" onClick={navigation.back}><ArrowLeft size={14}/>Back to {navigation.frames.at(-2)?.name}</button>:
@@ -175,11 +216,16 @@ export default function App() {
               </main>
               <WorkflowInspector key={draftKey} workflow={workflow} step={chosen} verification={detail.stepVerification.find(value=>value.stepId===chosen.id)}
                 proposals={detail.proposals} draft={draft} onDraft={value=>setDrafts(previous=>({...previous,[draftKey]:value}))}
-                onRefresh={()=>refreshWorkflow(workflow.id)} onChild={id=>navigation.child(id,'Child workflow')} onSelect={id=>navigation.update({stepId:id})} onAnnotate={()=>annotate('step')}/>
+                onRefresh={()=>refreshWorkflow(workflow.id)} onChild={id=>navigation.child(id,'Child workflow')} onSelect={id=>navigation.update({stepId:id})} onAnnotate={()=>annotate('step')}
+                onDecision={openDecision} onDecisions={()=>setDecisionTarget({scope:{projectId,workflowId:workflow.id,stepId:chosen.id}})}/>
             </div>}
             {!workflow&&!workflowError&&<p className="loading-view" role="status">Loading workflow…</p>}
           </>}
         </>}
+        {decisionTarget&&<DecisionCenter target={decisionTarget} projectIds={visibleProjectIds} drafts={Object.fromEntries(Object.entries(decisionDrafts).map(([id,draft])=>[id,draft.value]))}
+          onSelection={decision=>setDecisionTarget(previous=>previous?{scope:previous.scope,decision:decision??undefined}:previous)} onForget={forgetDecision}
+          onDraft={(decision,value)=>setDecisionDrafts(previous=>({...previous,[decision.id]:{projectId:decision.projectId,value}}))}
+          onChanged={experienceChanged} onClose={()=>{setDecisionTarget(null);if(view==='decisions')setView(project?'overview':'workspace');}}/>}
       </div>
     </div>
     {editor&&<ProjectEditor key={`${editor.kind}:${'item' in editor?editor.item?.id??'new':''}`} target={editor} onClose={()=>setEditor(null)} onSaved={result=>void saved(result)}/>}

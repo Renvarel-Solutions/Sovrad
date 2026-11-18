@@ -3,11 +3,13 @@ import type {
   ProjectItemCreateInput, ProjectItemEditInput, ProjectSettingsInput, Proposal,
   RegisteredProject, Workflow, WorkflowCreateInput, WorkflowDetailResponse, WorkspaceQuery, WorkspaceResponse,
   Annotation, AnnotationInput, AmendWorkInput, WorkItem, WorkDetailResponse, WorkEvent,
+  Decision,DecisionAction,DecisionQuery,DecisionsResponse,LocalActionSession,AgentConnection,
 } from '@renvarel/architect-core';
 
 export class APIError extends Error {
   constructor(message:string, readonly status:number, readonly code?:string) { super(message); }
 }
+let sessionBootstrap:Promise<void>|undefined;
 
 async function request<T>(path:string, options?:RequestInit):Promise<T> {
   const response=await fetch('/api'+path,options);
@@ -25,6 +27,12 @@ function query(input:object):string {
   return params.size ? '?'+params.toString() : '';
 }
 export const api={
+  bootstrapSession:():Promise<void>=>sessionBootstrap??=request('/local-session').then(()=>{}).catch(reason=>{sessionBootstrap=undefined;throw reason;}),
+  localSession:()=>request<{session:LocalActionSession}>('/local-session'),
+  decisions:(input:DecisionQuery={},signal?:AbortSignal)=>request<DecisionsResponse>('/decisions'+query(input),{signal}),
+  decisionAction:(id:string,input:DecisionAction)=>request<{decision:Decision}>(`/decisions/${encodeURIComponent(id)}/action`,postOptions(input)),
+  connect:(id:string)=>request<{connection:AgentConnection}>(`/connections/${encodeURIComponent(id)}/connect`,postOptions({})),
+  disconnect:(id:string)=>request<{connection:AgentConnection}>(`/connections/${encodeURIComponent(id)}/disconnect`,postOptions({})),
   aiStatus:()=>request<{configured:boolean;model:string;limitMicros:number;remainingMicros:number;reservedMicros:number;spentMicros:number;paused:boolean;dailyAttempts:number}>('/ai/status'),
   health:()=>request<{ok:boolean;mode:string;aiConfigured:boolean}>('/health'),
   workspace:(input:WorkspaceQuery={},signal?:AbortSignal)=>request<WorkspaceResponse>('/workspace'+query(input),{signal}),

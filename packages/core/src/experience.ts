@@ -75,6 +75,12 @@ export type Decision = {
   id: string; projectId: string; workId: string | null; context: ContextRef; version: number;
   status: 'pending' | 'approved' | 'rejected' | 'revision_requested' | 'expired' | 'superseded';
   proposalDigest: string; binding: DecisionBinding; explanation: DecisionExplanation;
+  sequence: number; receipt: DecisionReceipt | null;
+};
+export type DecisionReceipt = {
+  id:string; decisionId:string; decisionVersion:number; clientRequestId:string;
+  action:DecisionAction['action']; reason:string; actor:'local-owner-session'; sessionId:string;
+  proposalDigest:string; resolvedAt:string;
 };
 export type DecisionAction = {
   clientRequestId: string; expectedVersion: number; proposalDigest: string;
@@ -91,14 +97,17 @@ export type StepVerification = {
   stepId: string; verification: 'not_checked' | 'checking' | 'verified' | 'failed' | 'stale';
   freshness: 'current' | 'stale' | 'unknown'; lastCheckedAt: string | null;
   evidenceIds: string[]; reason: string;
+  pendingDecisionCount:number;
 };
 export type WorkflowDetailResponse = {
   workflow: Workflow; proposals: Proposal[]; history: {revision: number; workflow: Workflow}[];
   layout: WorkflowLayout; stepVerification: StepVerification[];
+  pendingDecisionCount:number;
 };
 export type WorkDetailResponse = {
   work: WorkItem; annotation: Annotation; subtasks: WorkItem[];
   events: WorkEvent[]; evidence: EvidenceView[]; decisions: Decision[];
+  pendingDecisionCount:number; verification:StepVerification['verification']; freshness:StepVerification['freshness'];
 };
 export type ExecutionBinding = {
   id: string; attemptId: string; workId: string; workVersion: number;
@@ -157,6 +166,7 @@ export type OverviewResponse = {
   verification: StepVerification['verification']; freshness: StepVerification['freshness'];
   verificationCounts: Record<StepVerification['verification'], number>;
   page: OverviewPage; totals: OverviewTotals;
+  pendingDecisionCount:number;
 };
 export type ProjectManagementSummary = {
   id: string; name: string; archived: boolean; selected: boolean; grantRevision: number;
@@ -168,5 +178,14 @@ export type ProjectManagementPage = {
 export type WorkspaceResponse = {
   access: AccessPreference; projects: RegisteredProject[];
   counts: Record<WorkState, number>; pendingDecisions: Decision[]; connections: AgentConnection[];
+  pendingDecisionCount:number;
   management?: ProjectManagementPage;
 };
+export type DecisionQuery = {
+  projectId?:string; itemId?:string; workflowId?:string; stepId?:string;
+  state?:Decision['status']; afterSequence?:number; limit?:number;
+};
+export type SequencePage = {limit:number; hasMore:boolean; nextAfterSequence:number};
+export type DecisionPage = SequencePage & {viewDigest:string};
+export type DecisionsResponse = {decisions:Decision[]; total:number; page:DecisionPage};
+export type DecisionSummary = {pending:number};

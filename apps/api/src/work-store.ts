@@ -5,6 +5,7 @@ import {
   buildSelectedAnnotationMaterial, serializeSelectedAnnotationMaterial,
   type Annotation, type AnnotationInput, type AmendWorkInput, type Interpretation, type Lease,
   type SelectedAnnotationMaterialV1, type WorkDetailResponse, type WorkEvent, type WorkItem, type WorkState,
+  type Decision,type DecisionAction,type LocalActionSession,type Evidence,type EvidenceInput,
 } from '@renvarel/architect-core';
 import {ProjectError, type ProjectStore} from './project-store.js';
 
@@ -40,7 +41,17 @@ const offline = 'The requested agent connection is unavailable. This request has
 const hash = (text:string):string => createHash('sha256').update(text,'utf8').digest('hex');
 
 export class WorkStore {
-  constructor(private readonly db:Database.Database, private readonly registry:ProjectStore) { this.reconcile(); }
+  private experience?:{read:<T>(fn:()=>T)=>T;detail:(work:WorkItem)=>Pick<WorkDetailResponse,'evidence'|'decisions'|'verification'|'freshness'|'pendingDecisionCount'>;
+    resolveDecision:(id:string,input:DecisionAction,session:LocalActionSession)=>Decision;recordEvidence:(input:EvidenceInput)=>Evidence};
+  constructor(private readonly db:Database.Database, private readonly registry:ProjectStore,private readonly now:()=>number=()=>Date.now()) { this.reconcile(); }
+  setExperience(value:NonNullable<WorkStore['experience']>):void{this.experience=value;}
+  private read<T>(fn:()=>T):T{return this.experience?this.experience.read(fn):this.db.transaction(fn).immediate();}
+  resolveDecision(id:string,input:DecisionAction,session:LocalActionSession):Decision {
+    if(!this.experience)throw new ProjectError(403,'Decision authority is unavailable.');return this.experience.resolveDecision(id,input,session);
+  }
+  recordEvidence(input:EvidenceInput):Evidence {
+    if(!this.experience)throw new ProjectError(403,'Evidence authority is unavailable.');return this.experience.recordEvidence(input);
+  }
 
   parseInput(input:AnnotationInput):AnnotationInput {
     this.registry.validateContent(input);
@@ -111,7 +122,7 @@ export class WorkStore {
   }
   private insert(prepared:PreparedAnnotation, digest:string, previous:Annotation|null):Intake {
     const {input,material,materialJSON,grantRevision} = prepared;
-    const id = randomUUID(), createdAt = new Date().toISOString(), revision = (previous?.revision ?? 0) + 1;
+    const id = randomUUID(), createdAt = new Date(this.now()).toISOString(), revision = (previous?.revision ?? 0) + 1;
     const consentReceipt = input.dispatch.mode === 'connected' ? {annotationId:id,annotationRevision:revision,
       contextDigest:digest,grantRevision,target:input.target,grantedAt:createdAt} : null;
     const annotation:Annotation = {...input,id,revision,supersedesId:previous?.id ?? null,createdAt,consentReceipt,material,materialJSON};
@@ -133,6 +144,9 @@ export class WorkStore {
     return JSON.parse(row.payload) as Annotation;
   }
   get(id:string):WorkItem {
+    return this.read(()=>this.getRaw(id));
+  }
+  private getRaw(id:string):WorkItem {
     const row = this.db.prepare('SELECT payload FROM work_items WHERE id=?').get(id) as Payload|undefined;
     if (!row) throw new ProjectError(404,'Work not found');
     const work = JSON.parse(row.payload) as WorkItem;
@@ -140,23 +154,23 @@ export class WorkStore {
     return work;
   }
   detail(id:string):WorkDetailResponse {
-    return this.db.transaction(() => {
+    return this.read(() => {
       const work = this.get(id), annotation = this.annotation(work.annotationId);
       const subtasks = this.filtered({}).filter(item => item.parentWorkId === id);
-      return {work,annotation,subtasks,events:this.readEvents(id),evidence:[],decisions:[]};
-    }).deferred();
+      return {work,annotation,subtasks,events:this.readEvents(id),evidence:[],decisions:[],verification:'not_checked',freshness:'unknown',pendingDecisionCount:0,...this.experience?.detail(work)};
+    });
   }
   private readEvents(id:string, afterSequence=0, limit?:number):WorkEvent[] {
     const sql = 'SELECT sequence,kind,time,detail FROM work_events WHERE work_id=? AND sequence>? ORDER BY sequence';
     return (limit === undefined ? this.db.prepare(sql).all(id,afterSequence) : this.db.prepare(sql+' LIMIT ?').all(id,afterSequence,limit)) as WorkEvent[];
   }
   events(id:string, input:unknown):{events:WorkEvent[]; nextAfterSequence:number} {
-    return this.db.transaction(() => {
+    return this.read(() => {
       this.get(id);
       const query = workSchemas.events.parse(input), after = query.afterSequence ?? 0;
       const events = this.readEvents(id,after,query.limit ?? 50);
       return {events,nextAfterSequence:events.at(-1)?.sequence ?? after};
-    }).deferred();
+    });
   }
   private filtered(filter:ListFilter):WorkItem[] {
     const visible = new Set(this.registry.list().map(project => project.id));
@@ -168,18 +182,21 @@ export class WorkStore {
         (!filter.stepId || work.context.stepId === filter.stepId));
   }
   list(input:unknown):{work:WorkItem[]} {
-    return this.db.transaction(() => {
+    return this.read(() => {
       const query = workSchemas.list.parse(input);
       return {work:this.filtered(query).slice(0,query.limit ?? 50)};
-    }).deferred();
+    });
   }
   annotations(input:unknown):{annotations:Annotation[]} {
-    return this.db.transaction(() => {
+    return this.read(() => {
       const query = workSchemas.list.parse(input);
       return {annotations:this.filtered(query).slice(0,query.limit ?? 50).map(work => this.annotation(work.annotationId))};
-    }).deferred();
+    });
   }
   counts(projectIds:readonly string[]):Record<WorkState,number> {
+    return this.read(()=>this.rawCounts(projectIds));
+  }
+  private rawCounts(projectIds:readonly string[]):Record<WorkState,number> {
     const counts:Record<WorkState,number> = {new:0,understanding:0,queued:0,working:0,checking:0,done:0,needs_decision:0,blocked:0,cancelled:0,superseded:0};
     const visible = new Set(projectIds);
     const rows = this.db.prepare('SELECT project_id,state,count(*) AS count FROM work_items GROUP BY project_id,state').all() as {project_id:string;state:WorkState;count:number}[];
@@ -187,7 +204,10 @@ export class WorkStore {
     return counts;
   }
   private event(id:string, kind:string, detail:string):void {
-    this.db.prepare('INSERT INTO work_events(work_id,kind,time,detail) VALUES (?,?,?,?)').run(id,kind,new Date().toISOString(),detail);
+    const time=new Date(this.now()).toISOString();
+    this.db.prepare('INSERT INTO work_events(work_id,kind,time,detail) VALUES (?,?,?,?)').run(id,kind,time,detail);
+    const work=this.db.prepare('SELECT project_id,payload FROM work_items WHERE id=?').get(id) as {project_id:string;payload:string};
+    this.db.prepare('INSERT INTO project_audit_events(project_id,kind,time,payload) VALUES (?,?,?,?)').run(work.project_id,kind,time,JSON.stringify({context:(JSON.parse(work.payload) as WorkItem).context}));
   }
   private save(work:WorkItem, kind:string, detail:string):WorkItem {
     this.db.prepare('UPDATE work_items SET state=?,version=?,payload=? WHERE id=?').run(work.state,work.version,JSON.stringify(work),work.id);
@@ -197,7 +217,7 @@ export class WorkStore {
   private transition(work:WorkItem, state:WorkState, kind:string, detail:string):WorkItem {
     this.revoke(work.id);
     return this.save({...work,state,version:work.version + 1,blockers:state === 'blocked' ? [detail] : work.blockers,
-      updatedAt:new Date().toISOString()},kind,detail);
+      updatedAt:new Date(this.now()).toISOString()},kind,detail);
   }
   private revoke(workId:string):void {
     this.db.prepare("UPDATE work_outbox SET state='revoked',fence=fence+1,expires_at=NULL WHERE work_id=? AND state IN ('pending','claimed')").run(workId);
@@ -223,7 +243,7 @@ export class WorkStore {
   }
   private reconcile():void {
     this.db.transaction(() => {
-      const rows = this.db.prepare("SELECT w.payload FROM work_items w JOIN work_outbox o ON o.work_id=w.id WHERE o.state='claimed'").all() as Payload[];
+      const rows = this.db.prepare("SELECT w.payload FROM work_items w JOIN work_outbox o ON o.work_id=w.id WHERE o.state='claimed' AND o.phase='interpretation'").all() as Payload[];
       for (const row of rows) this.transition(JSON.parse(row.payload) as WorkItem,'blocked','interrupted','The previous interpretation was interrupted. It will not be retried automatically.');
     }).immediate();
   }
@@ -237,21 +257,20 @@ export class WorkStore {
         current.materialJSON !== annotation.materialJSON || current.grantRevision !== receipt.grantRevision || outbox.grant_revision !== receipt.grantRevision ||
         outbox.annotation_id !== annotation.id || !storedReceipt || storedReceipt.payload !== JSON.stringify(receipt)) throw new ProjectError(409,'Consent or selected context is no longer current');
     if (annotation.target !== 'automatic' && annotation.target !== target) throw new ProjectError(409,'The selected agent connection is unavailable');
-    if (annotation.intent === 'future_plan' && !annotation.promoteFuture) throw new ProjectError(403,'Future notes remain blocked until explicitly promoted');
     this.registry.validateContent(annotation.materialJSON);
     return annotation;
   }
   claim(id:string, target:'codex'|'chatgpt'):InterpretationClaim|null {
     return this.db.transaction(() => {
-      const outbox = this.db.prepare('SELECT * FROM work_outbox WHERE work_id=?').get(id) as Outbox|undefined;
+      const outbox = this.db.prepare("SELECT * FROM work_outbox WHERE work_id=? AND phase='interpretation'").get(id) as Outbox|undefined;
       if (!outbox || outbox.state !== 'pending') return null;
       let work:WorkItem;
       try { work = this.get(id); this.dispatchMaterial(work,outbox,target); }
       catch { this.blockPending(id,'Dispatch is blocked: connection, consent, future-note or project authority is unavailable.'); return null; }
-      const lease:Lease = {workId:id,outboxId:outbox.id,fence:outbox.fence + 1,expiresAt:new Date(Date.now() + 20_000).toISOString()};
+      const lease:Lease = {workId:id,outboxId:outbox.id,fence:outbox.fence + 1,expiresAt:new Date(this.now() + 20_000).toISOString()};
       this.db.prepare("UPDATE work_outbox SET state='claimed',fence=?,expires_at=?,actual_target=? WHERE id=? AND state='pending'")
         .run(lease.fence,lease.expiresAt,target,outbox.id);
-      const next = this.save({...work,state:'understanding',version:work.version + 1,blockers:[],updatedAt:new Date().toISOString()},
+      const next = this.save({...work,state:'understanding',version:work.version + 1,blockers:[],updatedAt:new Date(this.now()).toISOString()},
         'interpretation_started','The explicitly selected in-process interpreter received this immutable material.');
       return {lease,workVersion:next.version,annotationId:work.annotationId,materialJSON:this.annotation(work.annotationId).materialJSON};
     }).immediate();
@@ -264,7 +283,7 @@ export class WorkStore {
     }
   }
   pendingIds():string[] {
-    return (this.db.prepare("SELECT work_id FROM work_outbox WHERE state='pending' ORDER BY rowid").all() as {work_id:string}[]).map(row => row.work_id);
+    return (this.db.prepare("SELECT work_id FROM work_outbox WHERE state='pending' AND phase='interpretation' ORDER BY rowid").all() as {work_id:string}[]).map(row => row.work_id);
   }
   private validClaim(claim:InterpretationClaim):WorkItem|null {
     const row = this.db.prepare('SELECT * FROM work_outbox WHERE id=?').get(claim.lease.outboxId) as Outbox|undefined;
@@ -273,7 +292,7 @@ export class WorkStore {
     const work = this.get(claim.lease.workId);
     if (work.version !== claim.workVersion || work.annotationId !== claim.annotationId) return null;
     const expiresAt = row.expires_at ? Date.parse(row.expires_at) : NaN;
-    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    if (!Number.isFinite(expiresAt) || expiresAt <= this.now()) {
       this.transition(work,'blocked','interpretation_expired','The interpretation lease expired. Its result was discarded and will not be retried automatically.');
       return null;
     }
@@ -306,7 +325,7 @@ export class WorkStore {
     const reason = interpretation.kind === 'implementation'
       ? `Implementation execution is unavailable${project.grant === 'read_only' ? ' under a read-only grant' : ''}; native isolation and a separate approved manifest are required.`
       : 'Interpretation is available; trusted acceptance or review is not available yet.';
-    return {...work,interpretation,state:'blocked',version:work.version + 1,blockers:[reason],updatedAt:new Date().toISOString()};
+    return {...work,interpretation,state:'blocked',version:work.version + 1,blockers:[reason],updatedAt:new Date(this.now()).toISOString()};
   }
   applyInterpretation(id:string, expectedVersion:number, input:Interpretation):WorkItem {
     return this.db.transaction(() => {
@@ -315,7 +334,6 @@ export class WorkStore {
       const annotation = this.annotation(work.annotationId);
       if (annotation.dispatch.mode !== 'connected' || !annotation.consentReceipt) throw new ProjectError(403,'Local notes cannot receive a connected interpretation');
       this.recheck({input:annotation,material:annotation.material,materialJSON:annotation.materialJSON,grantRevision:annotation.consentReceipt.grantRevision});
-      if (annotation.intent === 'future_plan' && !annotation.promoteFuture) throw new ProjectError(403,'Future notes require explicit promotion');
       const next = this.interpreted(work,input);
       this.revoke(id);
       return this.save(next,'interpretation_recorded','Trusted interpretation recorded; execution and acceptance remain unavailable.');

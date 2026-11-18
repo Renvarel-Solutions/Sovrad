@@ -35,7 +35,7 @@ test('existing calculator upgrades with unchanged IDs rules and ledger', async t
   assert.equal(JSON.stringify(storage.history(CALCULATOR_WORKFLOW.id)),history);
   assert.equal(storage.budget.status().dailyAttempts,1);
   assert.equal(storage.budget.status().paused,true);
-  assert.equal(db.pragma('user_version',{simple:true}),5);
+  assert.equal(db.pragma('user_version',{simple:true}),6);
 });
 
 test('planning project has no source or execution',async t=>{
@@ -132,7 +132,7 @@ test('workflow detail and overview share step verification',async t=>{
   const projection=detail.json().stepVerification;
   assert.ok(Array.isArray(projection),'detail must return server verification');
   assert.equal(projection.length,5);
-  for (const row of projection) assert.deepEqual(row,{stepId:row.stepId,verification:'not_checked',freshness:'unknown',lastCheckedAt:null,evidenceIds:[],reason:'Acceptance evidence is not available yet.'});
+  for (const row of projection) assert.deepEqual(row,{stepId:row.stepId,verification:'not_checked',freshness:'unknown',lastCheckedAt:null,evidenceIds:[],reason:'Acceptance evidence is not available yet.',pendingDecisionCount:0});
   const overview=await app.inject({url:'/api/projects/sample-calculator/overview',headers});
   assert.equal(overview.statusCode,200);
   assert.deepEqual(overview.json().workflows.find(w=>w.id===CALCULATOR_WORKFLOW.id).stepVerification,projection);
@@ -146,8 +146,8 @@ test('grant HTTP changes fail closed until a real local session while ordinary m
   const label=await app.inject({method:'POST',url,headers,payload:{expectedGrantRevision:1,name:'Renamed'}});
   assert.equal(label.statusCode,200,label.body);
   const grant=await app.inject({method:'POST',url,headers,payload:{expectedGrantRevision:1,grant:'read_only'}});
-  assert.equal(grant.statusCode,503,grant.body);
-  assert.equal(grant.json().code,'LOCAL_SESSION_UNAVAILABLE');
+  assert.equal(grant.statusCode,403,grant.body);
+  assert.equal(grant.json().code,'LOCAL_SESSION_REQUIRED');
   assert.equal(storage.registry.list().find(p=>p.id===project.id).grant,'planning_only');
   assert.equal(storage.registry.setGrant(project.id,{expectedGrantRevision:1,grant:'read_only'}).project.grantRevision,2);
   assert.throws(()=>storage.registry.setGrant(project.id,{expectedGrantRevision:1,grant:'planning_only'}),/stale/i);
@@ -379,8 +379,8 @@ test('HTTP archive hides ordinary reads and exact-current narrow restore preserv
   assert.equal((await app.inject({url:`/api/workflows/${CALCULATOR_WORKFLOW.id}`,headers})).statusCode,200);
   assert.equal((await change({expectedGrantRevision:2,archived:false})).statusCode,409);
   const blocked=await change({expectedGrantRevision:3,grant:'planning_only'});
-  assert.equal(blocked.statusCode,503);
-  assert.equal(blocked.json().code,'LOCAL_SESSION_UNAVAILABLE');
+  assert.equal(blocked.statusCode,403);
+  assert.equal(blocked.json().code,'LOCAL_SESSION_REQUIRED');
   assert.equal(JSON.stringify(storage.workflow(CALCULATOR_WORKFLOW.id)),workflow);
   assert.equal(JSON.stringify(storage.history(CALCULATOR_WORKFLOW.id)),history);
   const audit=db.prepare("SELECT payload FROM project_audit_events WHERE project_id='sample-calculator' AND kind='authority_revoked' ORDER BY sequence").all().map(row=>JSON.parse(row.payload));
@@ -474,17 +474,23 @@ test('overview exhausted collections stay empty while the other continues and fu
 
 test('overview page and totals use one private database read snapshot despite a concurrent semantic write',async t=>{
   const {app,storage,db,url,graphs}=completeListFixture(t,1,1);
-  const original=storage.workflows;
-  let changed=false;
+  const original=storage.workflows;db.pragma('busy_timeout=0');
+  const changed={...graphs[0],revision:2};
+  const update=()=>db.prepare('UPDATE workflows SET revision=2,payload=? WHERE id=?').run(JSON.stringify(changed),graphs[0].id);
+  let attempted=false;
   storage.workflows=function(id) {
-    if(!changed){changed=true;db.prepare('UPDATE workflows SET revision=2,payload=? WHERE id=?').run(JSON.stringify({...graphs[0],revision:2}),graphs[0].id);}
+    if(!attempted){attempted=true;assert.throws(update,error=>error.code==='SQLITE_BUSY','the immediate read/reconciliation transaction must serialize the competing writer');}
     return original.call(this,id);
   };
   t.after(()=>{storage.workflows=original;});
   const snapshot=await getPage(app,url);
   assert.equal(snapshot.statusCode,200,snapshot.body);assert.equal(snapshot.json().workflows[0].revision,1,'the earlier project/item read must pin this same response snapshot');
-  assert.equal(snapshot.json().totals.workflows,1);
+  assert.equal(attempted,true,'the competing writer was actually attempted');
+  assert.equal(snapshot.json().totals.workflows,1);assert.equal(snapshot.json().workflows.length,1);
+  assert.equal(db.prepare('SELECT revision FROM workflows WHERE id=?').get(graphs[0].id).revision,1,'the refused write left no partial mutation');
+  storage.workflows=original;assert.equal(update().changes,1,'the same writer commits after the read transaction ends');
   const next=await getPage(app,url);assert.equal(next.statusCode,200,next.body);assert.equal(next.json().workflows[0].revision,2);
+  assert.equal(next.json().totals.workflows,1);
 });
 
 test('overview cursors replay and survive layout changes while malformed scope filter limit and tamper refuse partial pages',async t=>{

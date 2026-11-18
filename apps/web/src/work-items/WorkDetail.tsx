@@ -1,5 +1,6 @@
 import {useRef,useState} from 'react';
-import type {WorkDetailResponse,WorkItem} from '@renvarel/architect-core';
+import type {Decision,WorkDetailResponse,WorkItem} from '@renvarel/architect-core';
+import {EvidencePanel} from '../evidence/EvidencePanel';
 import {api} from '../api';
 import {SelectedMaterial,intentLabel,targetLabel} from '../annotations/SelectedMaterial';
 
@@ -33,10 +34,11 @@ function StopWork({work,onRefresh}:{work:WorkItem;onRefresh:()=>Promise<void>}) 
   </>}</div>;
 }
 
-export function WorkDetail({detail,onAmend,onRefresh}:{
+export function WorkDetail({detail,onAmend,onRefresh,onDecision}:{
   detail:WorkDetailResponse;onAmend:(detail:WorkDetailResponse)=>void;onRefresh:()=>Promise<void>;
+  onDecision:(decision:Decision)=>void;
 }) {
-  const {work,annotation,events,evidence,subtasks}=detail;
+  const {work,annotation,events,subtasks}=detail;
   const editable=!['done','cancelled','superseded'].includes(work.state);
   return <section className="work-detail" aria-label="Work detail">
     <div className="overview-heading"><h2>Work detail</h2><span className="verification-badge">{workStateLabel(work.state)}</span></div>
@@ -57,7 +59,9 @@ export function WorkDetail({detail,onAmend,onRefresh}:{
       {events.length?<ol>{events.map(event=><li key={event.sequence}><time>{new Date(event.time).toLocaleString()}</time><p>{event.detail}</p></li>)}</ol>:<p>No events are available.</p>}
     </section>
     <section aria-label="Subtasks"><h3>Subtasks</h3>{subtasks.length?<ul>{subtasks.map(task=><li key={task.id}>{workStateLabel(task.state)} · {task.id}</li>)}</ul>:<p className="helper">No subtasks have been recorded.</p>}</section>
-    <section aria-label="Evidence"><h3>Evidence</h3>{evidence.length?<ul>{evidence.map(value=><li key={value.id}>{value.summary} · {value.freshness}{value.staleReason&&` · ${value.staleReason}`}</li>)}</ul>:<p className="helper">No evidence has been recorded.</p>}</section>
-    {detail.decisions.length>0&&<p className="helper">{detail.decisions.length} recorded decisions. Decision actions are not available in this preview.</p>}
+    <EvidencePanel detail={detail}/>
+    <section aria-label="Work decisions"><h3>Needs your decision {detail.pendingDecisionCount}</h3>
+      {detail.decisions.map(decision=><div key={decision.id}><p>{decision.explanation.action} · {decision.status.replaceAll('_',' ')}</p>
+        <button className="secondary-button" aria-label={`Open decision ${decision.id}`} onClick={()=>onDecision(decision)}>Review request</button></div>)}</section>
   </section>;
 }

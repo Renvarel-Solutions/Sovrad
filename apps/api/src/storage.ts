@@ -9,6 +9,12 @@ import {ImplementationStore} from './implementation-store.js';
 import {ImportStore} from './import-store.js';
 import {ProjectStore} from './project-store.js';
 import {WorkStore} from './work-store.js';
+import {ExperienceContext,type ExperienceStoreOptions} from './experience-context.js';
+import {DecisionStore} from './decision-store.js';
+import {ExecutionBindingStore} from './execution-binding-store.js';
+import {EvidenceStore} from './evidence-store.js';
+import {ConnectionStore} from './connection-store.js';
+import {LocalSessionStore} from './local-session.js';
 import {
   CALCULATOR_PROJECT, CALCULATOR_WORKFLOW, applyApprovedProposal, assertValidWorkflow,
   type Workflow, type Project, type Proposal, type WorkState,
@@ -21,8 +27,14 @@ export class Storage {
   readonly imports: ImportStore;
   readonly registry: ProjectStore;
   readonly work: WorkStore;
+  readonly decisions:DecisionStore;
+  readonly executionBindings:ExecutionBindingStore;
+  readonly evidence:EvidenceStore;
+  readonly connections:ConnectionStore;
+  readonly sessions:LocalSessionStore;
+  private readonly experience:ExperienceContext;
   private readonly directory: string;
-  constructor(directory = dataDirectory()) {
+  constructor(directory = dataDirectory(),options:ExperienceStoreOptions={}) {
     directory = validateDataDirectory(directory);
     mkdirSync(directory, {recursive: true, mode: 0o700});
     this.directory = directory;
@@ -65,7 +77,21 @@ export class Storage {
       this.seed();
       this.db.prepare('INSERT OR IGNORE INTO workflow_revisions(workflow_id,revision,payload) SELECT id,revision,payload FROM workflows').run();
       this.registry = new ProjectStore(this.db,this);
-      this.work = new WorkStore(this.db,this.registry);
+      this.work = new WorkStore(this.db,this.registry,options.now);
+      this.experience=new ExperienceContext(this.db,this.registry,this.work,id=>this.workflow(id),options);
+      this.sessions=new LocalSessionStore(this.db,this.experience.now);
+      this.decisions=new DecisionStore(this.experience);
+      this.executionBindings=new ExecutionBindingStore(this.experience,this.decisions);
+      this.evidence=new EvidenceStore(this.experience,this.executionBindings);
+      this.executionBindings.coverage=(b,l)=>this.evidence.coverage(b,l);
+      this.connections=new ConnectionStore(this.experience,this.executionBindings);
+      this.experience.reconcile=()=>{this.executionBindings.reconcileCurrent();this.decisions.reconcile();};
+      this.db.transaction(()=>{this.executionBindings.interruptActive();this.experience.refresh();}).immediate();
+      this.work.setExperience({read:fn=>this.experience.read(fn),detail:w=>{
+        const projection=this.evidence.workProjection(w);
+        return {evidence:this.evidence.forWork(w.id),decisions:this.decisions.permitted().filter(d=>d.workId===w.id),
+          verification:projection.verification,freshness:projection.freshness,pendingDecisionCount:this.decisions.pending().filter(d=>d.workId===w.id).length};
+      },resolveDecision:(id,input,session)=>this.decisions.resolve(id,input,session),recordEvidence:input=>this.evidence.record(input)});
       this.budget = new AIBudget(this.db);
       this.imports = new ImportStore(this.db);
       this.implementation = new ImplementationStore(this.db,directory,(id,revision)=>{
@@ -80,9 +106,22 @@ export class Storage {
       throw error;
     }
   }
-  close(): void { this.db.close(); }
+  experienceRead<T>(fn:()=>T):T{return this.experience?this.experience.read(fn):fn();}
+  experienceSteps(workflow:Workflow):import('@renvarel/architect-core').StepVerification[]{return this.evidence.stepVerification(workflow);}
+  pendingDecisions():import('@renvarel/architect-core').Decision[]{return this.decisions.pending();}
+  connectionList():import('@renvarel/architect-core').AgentConnection[]{return this.connections.list();}
+  close(): void {
+    if(!this.db.open)return;
+    this.db.transaction(()=>this.executionBindings.interruptActive()).immediate();this.db.close();
+  }
   workCounts(projectIds: readonly string[]): Record<WorkState,number> { return this.work.counts(projectIds); }
-  revokeWork(projectId: string): void { this.work?.revokeProject(projectId); }
+  revokeWork(projectId: string): void {
+    this.db.transaction(()=>{
+      this.work?.revokeProject(projectId);
+      this.executionBindings?.revokeProject(projectId);
+      for(const decision of this.decisions?.all()??[])if(decision.projectId===projectId&&['pending','approved'].includes(decision.status))this.decisions.invalidate(decision.id,'superseded');
+    }).immediate();
+  }
   async backup(): Promise<string> {
     const destination = backupPath(this.directory);
     await this.db.backup(destination);

@@ -15,7 +15,7 @@ function queryRecord(value: unknown): Record<string,unknown> {
 
 export function projectFailure(reply: FastifyReply, error: unknown): FastifyReply {
   if (error instanceof z.ZodError) return reply.code(400).send({error:'Invalid request'});
-  if (error instanceof ProjectError) return reply.code(error.status).send({error:error.message});
+  if (error instanceof ProjectError) return reply.code(error.status).send({error:error.message,...('code' in error&&error.code==='LOCAL_SESSION_REQUIRED'?{code:error.code}:{})});
   if (error instanceof ProjectPaginationError) return reply.code(error.status).send({error:error.message,...(error.code ? {code:error.code} : {})});
   return reply.code(500).send({error:'Unable to complete this request. No change was applied.'});
 }
@@ -36,12 +36,13 @@ export function registerProjects(app: FastifyInstance, storage: Storage): void {
   });
   app.post('/api/projects/:id/settings',async(req,reply) => {
     try {
+      z.object({}).strict().parse(req.query);
       const {id} = projectParams.parse(req.params);
       registry.validateContent(req.body);
       const input = projectSchemas.settings.parse(req.body);
       if (input.grant !== undefined) {
         registry.project(id);
-        return reply.code(503).send({error:'A validated local action session is not available yet.',code:'LOCAL_SESSION_UNAVAILABLE'});
+        storage.sessions.require(req.headers.cookie);
       }
       return registry.updateSettings(id,input);
     } catch (error) { return projectFailure(reply,error); }

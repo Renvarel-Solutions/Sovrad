@@ -1,6 +1,7 @@
 import {
   digestSelectedAnnotationMaterial,
   type Annotation, type AnnotationInput, type AmendWorkInput, type Interpretation, type WorkItem,
+  type Decision,type DecisionAction,type LocalActionSession,type Evidence,type EvidenceInput,
 } from '@renvarel/architect-core';
 import type {WorkStore} from './work-store.js';
 
@@ -34,6 +35,8 @@ export class WorkController {
   applyInterpretation(workId:string, expectedVersion:number, result:Interpretation):WorkItem {
     return this.store.applyInterpretation(workId,expectedVersion,result);
   }
+  resolveDecision(id:string,input:DecisionAction,session:LocalActionSession):Decision{return this.store.resolveDecision(id,input,session);}
+  recordEvidence(input:EvidenceInput):Evidence{return this.store.recordEvidence(input);}
   async dispatchPending(workId?:string):Promise<void> {
     if (!this.interpreter) return;
     for (const id of workId ? [workId] : this.store.pendingIds()) {

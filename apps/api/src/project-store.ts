@@ -11,11 +11,13 @@ import {
   type StepVerification, type Workflow, type WorkflowCreateInput, type WorkflowLayout, type WorkspaceResponse,
   type WorkspaceQuery, type ProjectManagementPage, type ProjectManagementSummary,
   type WorkState,
+  type Decision,type AgentConnection,
 } from '@renvarel/architect-core';
 import {containsPrivateContent} from './privacy.js';
 import {projectStepVerification} from './verification-projection.js';
 import type {ImplementationTask} from '../../runner/src/index.js';
 import {canonicalOverviewFilter, projectViewDigest, ProjectPagination, type ProjectCursorBinding} from './project-pagination.js';
+import {aggregateVerification} from './verification-projection.js';
 
 const identity = z.string().min(1).max(100);
 const revision = z.number().int().positive();
@@ -55,7 +57,10 @@ export class ProjectError extends Error {
 }
 type Metadata = Pick<RegisteredProject, 'archived' | 'grant' | 'grantRevision' | 'mapRevision' | 'sourceState'>;
 type StorageReader = {workflow(id: string): Workflow | null; workflows(id: string): Workflow[];
-  workCounts(projectIds: readonly string[]): Record<WorkState,number>; revokeWork(projectId: string): void};
+  workCounts(projectIds: readonly string[]): Record<WorkState,number>; revokeWork(projectId: string): void;
+  experienceRead:<T>(fn:()=>T)=>T;experienceSteps:(workflow:Workflow)=>StepVerification[];
+  pendingDecisions:()=>Decision[];connectionList:()=>AgentConnection[]};
+export type WorkSourceClassification={scope:'current'|'future'|'unknown'|'independent_scope';reason:string};
 type WorkflowSummary = OverviewResponse['workflows'][number];
 const compareText = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;
 const compareIds = (left: {id:string}, right: {id:string}): number => compareText(left.id,right.id);
@@ -366,17 +371,34 @@ export class ProjectStore {
     if (context.stepId && !step) throw new ProjectError(404,'Step not found');
     return {project,item:item ?? null,workflow,step:step ?? null};
   }
+  classifyWorkSource(context:ContextRef):WorkSourceClassification {
+    const unknown:WorkSourceClassification={scope:'unknown',reason:'The selected item ancestry cannot be resolved.'};
+    try{
+      const p=this.project(context.projectId),w=context.workflowId?this.workflow(context.workflowId):null;
+      this.resolveContext({...context,mapRevision:p.mapRevision,...(w?{specRevision:w.revision}:{})});
+      if(!context.itemId)return {scope:'independent_scope',reason:'This is an explicit scope without an item.'};
+      let id:string|null=context.itemId,future=false;const seen=new Set<string>();
+      while(id!==null){
+        if(seen.has(id)||seen.size>=100)return unknown;seen.add(id);
+        const row=this.db.prepare('SELECT project_id,parent_id,payload FROM project_items WHERE id=?').get(id) as {project_id:string;parent_id:string|null;payload:string}|undefined;
+        if(!row||row.project_id!==p.id)return unknown;const item=JSON.parse(row.payload) as ProjectItem;
+        if(item.id!==id||item.projectId!==p.id||item.parentId!==row.parent_id||!['planning','implementation','implemented','future'].includes(item.development))return unknown;
+        if(item.development==='future')future=true;id=item.parentId;
+      }
+      return {scope:future?'future':'current',reason:future?'The selected item or an ancestor is future-scoped.':'The selected item ancestry is current.'};
+    }catch{return unknown;}
+  }
   stepVerification(workflow: Workflow): StepVerification[] {
-    // Task 5 supplies immutable current bindings and acceptance requirements.
-    return workflow.steps.map(step => projectStepVerification({stepId:step.id,requirementsKnown:false,requiredAcceptanceIds:[],evidence:[]}));
+    return this.reader.experienceRead(()=>this.reader.experienceSteps(workflow).map(s=>({...s,
+      pendingDecisionCount:this.reader.pendingDecisions().filter(d=>d.context.workflowId===workflow.id&&d.context.stepId===s.stepId).length})));
   }
   overview(projectId: string, input: OverviewFilter = {}): OverviewResponse {
     // Pin accessibility, full matching view, both pages and totals to one read snapshot.
-    return this.db.transaction(() => {
+    return this.reader.experienceRead(() => {
       const project = this.project(projectId);
       const filter = this.parse(projectSchemas.overview,input);
       return this.overviewPage(project,filter);
-    }).deferred();
+    });
   }
   private matchingOverview(project: RegisteredProject, filter: OverviewFilter): {
     items: ProjectItem[]; workflows: WorkflowSummary[]; dependencies: OverviewResponse['dependencies'];
@@ -427,11 +449,15 @@ export class ProjectStore {
     const sources = new Set(items.map(item => item.id));
     const hasMoreItems = end < matching.items.length;
     const hasMoreWorkflows = end < matching.workflows.length;
-    return {project,items,workflows,dependencies:matching.dependencies.filter(edge => sources.has(edge.sourceItemId)),counts:this.itemCounts(items),
-      verification:'not_checked',freshness:'unknown',verificationCounts:this.verificationCounts(workflows),
+    const pageProjection=aggregateVerification('',workflows.flatMap(w=>w.stepVerification));
+    const totalProjection=aggregateVerification('',matching.workflows.flatMap(w=>w.stepVerification));
+    const pendingDecisionCount=this.reader.pendingDecisions().filter(d=>d.projectId===project.id&&(!filter.stepId||d.context.stepId===filter.stepId)&&
+      (d.context.itemId?matching.items.some(i=>i.id===d.context.itemId):d.context.workflowId?matching.workflows.some(w=>w.id===d.context.workflowId):!filter.itemId&&!filter.workflowId&&!filter.stepId&&!filter.development&&!filter.q)).length;
+    return {project,items,workflows,dependencies:matching.dependencies.filter(edge => sources.has(edge.sourceItemId)),counts:this.itemCounts(items),pendingDecisionCount,
+      verification:pageProjection.verification,freshness:pageProjection.freshness,verificationCounts:this.verificationCounts(workflows),
       page:{limit,hasMoreItems,hasMoreWorkflows,nextCursor:hasMoreItems || hasMoreWorkflows ? this.pagination.encode(binding,end) : null},
       totals:{items:matching.items.length,workflows:matching.workflows.length,counts:this.itemCounts(matching.items),
-        verificationCounts:this.verificationCounts(matching.workflows),verification:'not_checked',freshness:'unknown'}};
+        verificationCounts:this.verificationCounts(matching.workflows),verification:totalProjection.verification,freshness:totalProjection.freshness}};
   }
   private managementPage(input: WorkspaceQuery): ProjectManagementPage {
     const access = this.access();
@@ -445,11 +471,12 @@ export class ProjectStore {
     return {projects:projects.slice(offset,end),total:projects.length,page:{limit,nextCursor:end < projects.length ? this.pagination.encode(binding,end) : null}};
   }
   workspace(input: WorkspaceQuery = {}): WorkspaceResponse {
-    return this.db.transaction(() => {
+    return this.reader.experienceRead(() => {
       const query = this.parse(projectSchemas.workspace,input);
       const projects = this.list();
       return {access:this.access(),projects,counts:this.reader.workCounts(projects.map(project => project.id)),
-        pendingDecisions:[],connections:[],...(query.management ? {management:this.managementPage(query)} : {})};
-    }).deferred();
+        pendingDecisions:this.reader.pendingDecisions().slice(0,50),pendingDecisionCount:this.reader.pendingDecisions().length,
+        connections:this.reader.connectionList(),...(query.management ? {management:this.managementPage(query)} : {})};
+    });
   }
 }

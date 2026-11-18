@@ -1,16 +1,28 @@
 import {useEffect,useState} from 'react';
 import {BrainCircuit,Check,Code2,GitPullRequest,MessageSquarePlus,X} from 'lucide-react';
-import type {Proposal,Step,StepVerification,Workflow} from '@renvarel/architect-core';
-import {api} from '../api';
+import type {Decision,Proposal,Step,StepVerification,Workflow} from '@renvarel/architect-core';
+import {api,APIError} from '../api';
 import {AIStatus} from '../AIStatus';
 import {verificationLabel} from './WorkflowList';
 
 export type ProposalDraft = {message:string;rules:string;explanation:string;baseRevision:number;dirty:boolean};
-export function WorkflowInspector({workflow,step,verification,proposals,draft,onDraft,onRefresh,onChild,onSelect,onAnnotate}:{
+export function WorkflowInspector({workflow,step,verification,proposals,draft,onDraft,onRefresh,onChild,onSelect,onAnnotate,onDecision,onDecisions}:{
   workflow:Workflow;step:Step;verification:StepVerification|undefined;proposals:Proposal[];
   draft:ProposalDraft;onDraft:(draft:ProposalDraft)=>void;onRefresh:()=>Promise<void>;
   onChild:(id:string)=>void;onSelect:(id:string)=>void;onAnnotate:()=>void;
+  onDecision:(decision:Decision)=>void;onDecisions:()=>void;
 }) {
+  const [decisions,setDecisions]=useState<Decision[]>([]);
+  useEffect(()=>{
+    const abort=new AbortController();let current=true,denied=false,sequence=0;
+    const refresh=():void=>{if(denied)return;const id=++sequence;
+      void api.decisions({projectId:workflow.projectId,workflowId:workflow.id,stepId:step.id,state:'pending',limit:50},abort.signal)
+      .then(result=>{if(current&&id===sequence)setDecisions(result.decisions);}).catch(value=>{if(current&&id===sequence){
+        denied=value instanceof APIError&&(value.status===403||value.status===404);setDecisions([]);
+      }});};
+    refresh();const timer=window.setInterval(refresh,5000);
+    return()=>{current=false;abort.abort();window.clearInterval(timer);};
+  },[workflow.projectId,workflow.id,step.id,verification?.pendingDecisionCount]);
   const [tab,setTab]=useState<'rules'|'changes'>('rules');
   const [consent,setConsent]=useState(false);
   const [aiAvailable,setAiAvailable]=useState(false);
@@ -60,6 +72,10 @@ export function WorkflowInspector({workflow,step,verification,proposals,draft,on
       {notice&&<div className="notice" role="status"><Check size={16}/>{notice}<button title="Dismiss" onClick={()=>setNotice('')}><X size={13}/></button></div>}
       {error&&<div className="error" role="alert">{error}<button title="Dismiss" onClick={()=>setError('')}><X size={13}/></button></div>}
       {tab==='rules'?<>
+        <section aria-label="Stage decisions"><h3>Needs your decision {verification?.pendingDecisionCount??0}</h3>
+          {decisions.map(decision=><button key={decision.id} className="secondary-button" aria-label={`Open decision ${decision.id}`} onClick={()=>onDecision(decision)}>{decision.explanation.action}</button>)}
+          {(verification?.pendingDecisionCount??0)>decisions.length&&<button className="secondary-button" onClick={onDecisions}>View all stage decisions</button>}
+        </section>
         <div className="section-kicker">Current workflow rules</div><div className="rules-list">
           {step.rules.map((rule,index)=><div key={index} className="rule-item"><div className="rule-number">{String(index+1).padStart(2,'0')}</div><span>{rule}</span></div>)}
           {!step.rules.length&&<p className="helper">No rules have been defined for this stage.</p>}

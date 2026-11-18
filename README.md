@@ -5,6 +5,10 @@
 A local visual workspace for registered projects, workflow maps, contextual notes
 and exact specification review. Apache-2.0. Early local preview.
 
+The project UI, annotations and decision review described here are local,
+unpublished changes beyond the public foundation. This preview has no connected
+agent execution or private-project import, and no pilot has been run.
+
 ## Run on Windows
 
 Use Node.js 24, npm and Git. Open PowerShell in this source folder:
@@ -43,6 +47,27 @@ interpretation or known acceptance criteria. It does not start an agent. A later
 connected request requires another explicit review and consent. If an amendment
 becomes stale, Refresh selected context preserves the draft and requires review
 and renewed consent before sending.
+
+## Review decisions and evidence
+
+Needs your decision lists pending requests in the accessible project scope.
+Review the proposed action, permission and expiry, direct and indirect effects,
+uncertainties, cost and payer, failure and recovery, backup, alternatives and
+recommendation. Approve this action, Reject or Request revision records an exact
+bounded receipt. Changed requests require a fresh review; an expired local session
+can be renewed before choosing an action again. Approval does not launch work or
+grant code-editing, merge or deployment permission.
+
+The decision and evidence views use real local stores, exercised with synthetic
+fixtures. No agent creates new requests in this preview; a supported adapter is
+still required. Evidence retains its source and distinguishes current bound
+runtime evidence from historical or unbound records. A passing note or plan does
+not verify a workflow stage, and these views do not establish a live deployment.
+
+Agent connections lists Codex and ChatGPT as unavailable with no capabilities.
+Connect returns unavailable; Disconnect revokes dependent pending dispatch.
+Neither action signs in to a provider or makes an agent ready, and reconnecting
+does not restore revoked permission.
 
 ## Try the calculator workflow
 
@@ -118,15 +143,15 @@ approved repository commit and enforced sandbox/command approvals.
 
 External repository import is also disabled: its HTTP submission route refuses
 capture. Internal snapshot helpers are tested with synthetic repositories; this
-does not establish a private-project import. Decision actions, owner sessions,
-native/app-host agent connections and runtime-evidence integration remain future
-work. No live lead-agent controller is available.
+does not establish a private-project import. Local decision actions and owner
+receipts exist, but native/app-host adapters and live runtime-evidence integration
+remain unavailable. No live lead-agent controller is available.
 
 The project UI uses the private registry, planning items, creation-only
 workflow/child maps and separate layout overlays. Registering a
 repository candidate stores private pending metadata; it does not read source
 or discover projects. Keep candidate paths and project data outside public source.
-Grant changes through HTTP remain blocked until local action sessions exist.
+Grant changes require a current local owner cookie and do not authorize native work.
 See [architecture](docs/ARCHITECTURE.md) for pagination and authority contracts.
 
 ## Structure and quality

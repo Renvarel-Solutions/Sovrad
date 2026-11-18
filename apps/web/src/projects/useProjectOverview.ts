@@ -61,23 +61,36 @@ export function useProjectOverview(projectId:string,filter:OverviewFilter,refres
   useEffect(()=>{
     if(unavailable)return;
     let mounted=true;
+    let polling=false;
     const pollAbort=new AbortController();
     const timer=window.setInterval(()=>{
-      if(loading||!snapshot.current)return;
+      if(loading||polling||!snapshot.current)return;
+      polling=true;
       const id=control.current.id;
-      void api.overview(projectId,{...filter,limit:50},pollAbort.signal).then(first=>{
-        if(!mounted||id!==control.current.id)return;
-        const current=snapshot.current;
-        if(current&&(first.project.mapRevision!==current.project.mapRevision||JSON.stringify(first.totals)!==JSON.stringify(current.totals))){
-          setNotice('Project changed. Refreshed from the beginning.');void load();
+      const prior=snapshot.current;
+      // Refresh only as many bounded pages as the user has loaded. Equal totals
+      // cannot establish that the server's per-step evidence is unchanged.
+      const pages=Math.max(1,Math.ceil(Math.max(prior.items.length,prior.workflows.length)/50));
+      void (async()=>{
+        let result=await api.overview(projectId,{...filter,limit:50},pollAbort.signal);
+        if(result.project.mapRevision!==prior.project.mapRevision){
+          if(mounted&&id===control.current.id){setNotice('Project changed. Refreshed from the beginning.');void load();}
+          return;
         }
-      }).catch(reason=>{
+        for(let page=1;page<pages&&result.page.nextCursor;page++){
+          const next=await api.overview(projectId,{...filter,limit:50,cursor:result.page.nextCursor},pollAbort.signal);
+          result=mergePages(result,next);
+        }
+        if(mounted&&id===control.current.id&&!pollAbort.signal.aborted){snapshot.current=result;setData(result);setError('');}
+      })().catch(reason=>{
         if(!mounted||id!==control.current.id||pollAbort.signal.aborted)return;
-        if(reason instanceof APIError&&(reason.status===403||reason.status===404)){
+        if(reason instanceof APIError&&reason.code==='STALE_CURSOR'){
+          setNotice('This list changed. Refreshed from the beginning.');void load();
+        }else if(reason instanceof APIError&&(reason.status===403||reason.status===404)){
           setUnavailable(true);setError('Project access is no longer available.');snapshot.current=null;setData(null);
         }else setError('Could not refresh this list. Loaded information may be out of date.');
-      });
-    },15000);
+      }).finally(()=>{polling=false;});
+    },5000);
     return()=>{mounted=false;pollAbort.abort();window.clearInterval(timer);};
   },[projectId,filterKey,loading,load,unavailable]);
   const cancel=():void=>{
