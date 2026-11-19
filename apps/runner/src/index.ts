@@ -1,5 +1,7 @@
 import {createHash} from 'node:crypto';
 export {createProtocol} from './protocol.js';
+export {diagnoseConnection} from './connection.js';
+export type {DiagnosticOptions,DiagnosticResult} from './connection.js';
 export type TaskState = 'awaiting_approval' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
 export type Manifest = {
   workflowId: string; specRevision: number; specDigest: string; specReceiptId: string;
@@ -13,7 +15,7 @@ export type ImplementationTask = {
 };
 export type TaskEvent = {sequence: number; kind: string; time: string; detail: string};
 export const digest = (text: string): string => createHash('sha256').update(text).digest('hex');
-export const CODEX_VERSION = '0.166.0-alpha.5.1';
+export const CODEX_VERSION = '0.169.0-alpha.11.1';
 
 export function isolationPreflight(): {ready: false; findings: string[]} {
   // TODO: implement a native boundary and adversarial probes before enabling turns.
