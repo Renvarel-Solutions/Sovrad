@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import {Storage} from './storage.ts';
+import {CALCULATOR_WORKFLOW, NAVIGATION_MAIN_WORKFLOW, NAVIGATION_CHILD_WORKFLOW} from '@renvarel/architect-core';
 
 function fixture(t, transformDirectory = directory => directory) {
   const createdDirectory = mkdtempSync(path.join(os.tmpdir(), 'sovrad-budget-'));
@@ -75,7 +76,16 @@ test('online SQLite backup restores original workflow and budget without resetti
   const restored = new Database(backup, {readonly: true});
   try {
     assert.equal(restored.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
-    assert.equal(restored.prepare('SELECT count(*) AS n FROM workflow_revisions').get().n, 1);
+    const revisions = restored.prepare('SELECT workflow_id,revision,payload FROM workflow_revisions ORDER BY workflow_id,revision').all();
+    assert.deepEqual(revisions.map(({workflow_id,revision})=>({workflow_id,revision})),[
+      {workflow_id:'sample-calculator-arithmetic',revision:1},
+      {workflow_id:'sample-navigation-main',revision:1},
+      {workflow_id:'sample-navigation-validation',revision:1},
+    ]);
+    assert.equal(restored.prepare('SELECT count(*) AS n FROM workflow_revisions WHERE workflow_id=?').get('sample-calculator-arithmetic').n,1);
+    assert.equal(revisions.find(row=>row.workflow_id==='sample-calculator-arithmetic').payload,JSON.stringify(CALCULATOR_WORKFLOW));
+    assert.equal(revisions.find(row=>row.workflow_id==='sample-navigation-main').payload,JSON.stringify(NAVIGATION_MAIN_WORKFLOW));
+    assert.equal(revisions.find(row=>row.workflow_id==='sample-navigation-validation').payload,JSON.stringify(NAVIGATION_CHILD_WORKFLOW));
     assert.equal(restored.prepare('SELECT actual_micros FROM ai_spending').get().actual_micros, 370);
   } finally { restored.close(); }
 });

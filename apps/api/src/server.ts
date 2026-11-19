@@ -6,6 +6,11 @@ import { registerAI, aiConfigured, type AIConfig } from './ai.js';
 import {registerImplementation} from './implementation-routes.js';
 import {registerImports} from './import-routes.js';
 import {containsPrivateContent} from './privacy.js';
+import {ProjectError} from './project-store.js';
+import {projectFailure, registerProjects} from './project-routes.js';
+import {registerWork} from './work-routes.js';
+import {registerDecisions} from './decision-routes.js';
+import {registerConnections} from './connection-routes.js';
 
 const manualSchema = z.object({
   workflowId: z.string().min(1).max(100), stepId: z.string().min(1).max(100),
@@ -15,6 +20,7 @@ const manualSchema = z.object({
 }).strict();
 
 function handleError(reply: FastifyReply, error: unknown): FastifyReply {
+  if (error instanceof ProjectError) return projectFailure(reply,error);
   if (error instanceof z.ZodError) return reply.code(400).send({error: 'Invalid request'});
   const message = error instanceof Error ? error.message : '';
   if (/not found/i.test(message)) return reply.code(404).send({error: message});
@@ -57,6 +63,7 @@ export function buildApp(storage: Storage, options: {port?: number; webPort?: nu
     hardLimitConfirmed: process.env.SOVRAD_AI_HARD_LIMIT_CONFIRMED === 'true',
   };
   storage.imports.protectSecret(ai.apiKey);
+  storage.registry.protectSecret(ai.apiKey);
   const app = Fastify({logger: false, bodyLimit: 16384});
   const routeInventory: {method:string;url:string}[]=[];
   app.decorate('routeInventory',routeInventory);
@@ -65,28 +72,62 @@ export function buildApp(storage: Storage, options: {port?: number; webPort?: nu
   });
   app.setNotFoundHandler((_req,reply)=>reply.code(404).send({error:'Route not found'}));
   app.setErrorHandler((error,_req,reply)=>{
+    if (error instanceof ProjectError) return projectFailure(reply,error);
     const code=typeof error==='object' && error!==null && 'statusCode' in error?error.statusCode:500;
     const status=code===413?413:code===400 || error instanceof z.ZodError?400:500;
     return reply.code(status).send({error:status===413?'Request too large':status===400?'Invalid request':'Unable to complete this request'});
   });
   localBoundary(app, port, webPort, ai.apiKey);
+  // Apply project access to legacy surfaces as well as the registry routes.
+  // Read-only source grants still permit local planning/specification changes.
+  app.addHook('preHandler',async(req,reply)=>{
+    try {
+      const route=req.routeOptions.url ?? '';
+      const params=req.params as {id?:string};
+      const body=req.body as {workflowId?:unknown} | undefined;
+      let workflowId: string | undefined;
+      if (route.startsWith('/api/workflows/')) workflowId=params.id;
+      if (route==='/api/proposals' || route==='/api/ai/proposal' || route==='/api/implementation/tasks') {
+        if (typeof body?.workflowId==='string') workflowId=body.workflowId;
+      }
+      if (route==='/api/proposals/:id/decision' && params.id) workflowId=storage.proposal(params.id)?.workflowId;
+      if (route.startsWith('/api/implementation/tasks/:id') && params.id) {
+        try { workflowId=storage.implementation.get(params.id).manifest.workflowId; } catch { /* Handler returns its existing safe missing-target response. */ }
+      }
+      if (workflowId) {
+        storage.registry.workflow(workflowId);
+        if (req.method==='POST' && route.startsWith('/api/implementation/') && !route.endsWith('/cancel')) storage.registry.requireExecution(workflowId);
+      }
+    } catch (error) { return projectFailure(reply,error); }
+  });
   app.addHook('onClose', () => storage.close());
   app.get('/api/health', async () => ({
     ok: true, service: 'sovrad-api', mode: 'local-only',
     aiConfigured: aiConfigured(ai), runnerEnabled: false,
   }));
-  app.get('/api/projects', async () => ({projects: storage.projects()}));
+  app.get('/api/projects', async (req) => {
+    z.object({}).strict().parse(req.query);
+    return {projects: storage.registry.list()};
+  });
   app.get('/api/projects/:id/workflows', async (req, reply) => {
+    z.object({}).strict().parse(req.query);
     const {id} = z.object({id: z.string()}).parse(req.params);
-    if (!storage.projects().some(p => p.id === id)) return reply.code(404).send({error: 'Project not found'});
+    storage.registry.project(id);
     return {workflows: storage.workflows(id)};
   });
   app.get('/api/workflows/:id', async (req, reply) => {
+    z.object({}).strict().parse(req.query);
     const {id} = z.object({id: z.string()}).parse(req.params);
     const workflow = storage.workflow(id);
     if (!workflow) return reply.code(404).send({error: 'Workflow not found'});
-    return {workflow, proposals: storage.proposals(id), history: storage.history(id)};
+    return storage.experienceRead(()=>({workflow, proposals: storage.proposals(id), history: storage.history(id),
+      layout:storage.registry.layout(id),stepVerification:storage.registry.stepVerification(workflow),
+      pendingDecisionCount:storage.decisions.pending({workflowId:id}).length}));
   });
+  registerProjects(app,storage);
+  registerWork(app,storage);
+  registerDecisions(app,storage);
+  registerConnections(app,storage);
   registerProposals(app, storage, ai.apiKey);
   registerAI(app, storage, ai);
   registerImplementation(app, storage);

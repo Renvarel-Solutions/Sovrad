@@ -7,9 +7,17 @@ import {AIBudget} from './ai-budget.js';
 import {backupPath, migrate} from './migrations.js';
 import {ImplementationStore} from './implementation-store.js';
 import {ImportStore} from './import-store.js';
+import {ProjectStore} from './project-store.js';
+import {WorkStore} from './work-store.js';
+import {ExperienceContext,type ExperienceStoreOptions} from './experience-context.js';
+import {DecisionStore} from './decision-store.js';
+import {ExecutionBindingStore} from './execution-binding-store.js';
+import {EvidenceStore} from './evidence-store.js';
+import {ConnectionStore} from './connection-store.js';
+import {LocalSessionStore} from './local-session.js';
 import {
   CALCULATOR_PROJECT, CALCULATOR_WORKFLOW, applyApprovedProposal, assertValidWorkflow,
-  type Workflow, type Project, type Proposal
+  type Workflow, type Project, type Proposal, type WorkState,
 } from '@renvarel/architect-core';
 
 export class Storage {
@@ -17,8 +25,16 @@ export class Storage {
   readonly budget: AIBudget;
   readonly implementation: ImplementationStore;
   readonly imports: ImportStore;
+  readonly registry: ProjectStore;
+  readonly work: WorkStore;
+  readonly decisions:DecisionStore;
+  readonly executionBindings:ExecutionBindingStore;
+  readonly evidence:EvidenceStore;
+  readonly connections:ConnectionStore;
+  readonly sessions:LocalSessionStore;
+  private readonly experience:ExperienceContext;
   private readonly directory: string;
-  constructor(directory = dataDirectory()) {
+  constructor(directory = dataDirectory(),options:ExperienceStoreOptions={}) {
     directory = validateDataDirectory(directory);
     mkdirSync(directory, {recursive: true, mode: 0o700});
     this.directory = directory;
@@ -60,6 +76,22 @@ export class Storage {
       this.db.exec('CREATE TABLE IF NOT EXISTS ai_daily_usage(day TEXT PRIMARY KEY,requests INTEGER NOT NULL CHECK(requests >= 0)); CREATE TABLE IF NOT EXISTS workflow_revisions(workflow_id TEXT NOT NULL,revision INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(workflow_id,revision));');
       this.seed();
       this.db.prepare('INSERT OR IGNORE INTO workflow_revisions(workflow_id,revision,payload) SELECT id,revision,payload FROM workflows').run();
+      this.registry = new ProjectStore(this.db,this);
+      this.work = new WorkStore(this.db,this.registry,options.now);
+      this.experience=new ExperienceContext(this.db,this.registry,this.work,id=>this.workflow(id),options);
+      this.sessions=new LocalSessionStore(this.db,this.experience.now);
+      this.decisions=new DecisionStore(this.experience);
+      this.executionBindings=new ExecutionBindingStore(this.experience,this.decisions);
+      this.evidence=new EvidenceStore(this.experience,this.executionBindings);
+      this.executionBindings.coverage=(b,l)=>this.evidence.coverage(b,l);
+      this.connections=new ConnectionStore(this.experience,this.executionBindings);
+      this.experience.reconcile=()=>{this.executionBindings.reconcileCurrent();this.decisions.reconcile();};
+      this.db.transaction(()=>{this.executionBindings.interruptActive();this.experience.refresh();}).immediate();
+      this.work.setExperience({read:fn=>this.experience.read(fn),detail:w=>{
+        const projection=this.evidence.workProjection(w);
+        return {evidence:this.evidence.forWork(w.id),decisions:this.decisions.permitted().filter(d=>d.workId===w.id),
+          verification:projection.verification,freshness:projection.freshness,pendingDecisionCount:this.decisions.pending().filter(d=>d.workId===w.id).length};
+      },resolveDecision:(id,input,session)=>this.decisions.resolve(id,input,session),recordEvidence:input=>this.evidence.record(input)});
       this.budget = new AIBudget(this.db);
       this.imports = new ImportStore(this.db);
       this.implementation = new ImplementationStore(this.db,directory,(id,revision)=>{
@@ -74,7 +106,22 @@ export class Storage {
       throw error;
     }
   }
-  close(): void { this.db.close(); }
+  experienceRead<T>(fn:()=>T):T{return this.experience?this.experience.read(fn):fn();}
+  experienceSteps(workflow:Workflow):import('@renvarel/architect-core').StepVerification[]{return this.evidence.stepVerification(workflow);}
+  pendingDecisions():import('@renvarel/architect-core').Decision[]{return this.decisions.pending();}
+  connectionList():import('@renvarel/architect-core').AgentConnection[]{return this.connections.list();}
+  close(): void {
+    if(!this.db.open)return;
+    this.db.transaction(()=>this.executionBindings.interruptActive()).immediate();this.db.close();
+  }
+  workCounts(projectIds: readonly string[]): Record<WorkState,number> { return this.work.counts(projectIds); }
+  revokeWork(projectId: string): void {
+    this.db.transaction(()=>{
+      this.work?.revokeProject(projectId);
+      this.executionBindings?.revokeProject(projectId);
+      for(const decision of this.decisions?.all()??[])if(decision.projectId===projectId&&['pending','approved'].includes(decision.status))this.decisions.invalidate(decision.id,'superseded');
+    }).immediate();
+  }
   async backup(): Promise<string> {
     const destination = backupPath(this.directory);
     await this.db.backup(destination);
@@ -114,6 +161,10 @@ export class Storage {
   proposals(workflowId:string):Proposal[] {
     return (this.db.prepare('SELECT payload FROM proposals WHERE workflow_id=? ORDER BY rowid DESC').all(workflowId) as {payload:string}[]).map(r=>JSON.parse(r.payload) as Proposal);
   }
+  proposal(id: string): Proposal | null {
+    const row=this.db.prepare('SELECT payload FROM proposals WHERE id=?').get(id) as {payload:string}|undefined;
+    return row ? JSON.parse(row.payload) as Proposal : null;
+  }
   propose(input:Pick<Proposal,'workflowId'|'stepId'|'baseRevision'|'text'|'proposedRules'|'explanation'|'provenance'>):Proposal {
     const workflow=this.workflow(input.workflowId);
     if(!workflow) throw new Error('Workflow not found');
@@ -137,6 +188,7 @@ export class Storage {
       if (action === 'approve') this.db.prepare('INSERT INTO workflow_revisions(workflow_id,revision,payload) VALUES (?,?,?)').run(next.id,next.revision,JSON.stringify(next));
       const updated:Proposal={...proposal,status:action==='approve'?'approved':'rejected'};
       if(action==='approve') this.db.prepare('UPDATE workflows SET revision=?,payload=? WHERE id=? AND revision=?').run(next.revision,JSON.stringify(next),next.id,old.revision);
+      if (action === 'approve') this.revokeWork(next.projectId);
       this.db.prepare('UPDATE proposals SET status=?,payload=? WHERE id=? AND status=?').run(updated.status,JSON.stringify(updated),updated.id,'draft');
       this.db.prepare('INSERT INTO audit_events(id,time,action,workflow_id,base_revision,resulting_revision,proposal_id,specification_json) VALUES (?,?,?,?,?,?,?,?)').run(randomUUID(),new Date().toISOString(),action,old.id,old.revision,action==='approve'?next.revision:null,updated.id,JSON.stringify(next));
       return {proposal:updated,workflow:next};
