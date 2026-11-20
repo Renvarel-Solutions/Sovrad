@@ -1,10 +1,9 @@
 # Sovrad architecture
 
-Developer reference for the local source, reviewed 2026-11-16 (package 0.1.0).
+Developer reference for the source, reviewed 2026-11-19 (package 0.1.0).
 The browser provides registered-project views, workflow navigation, contextual
 annotations, work history, decision review, evidence and connection status, plus
-the original calculator proposal/budget controls. These changes remain local and
-unpublished beyond the public foundation.
+the original calculator proposal/budget controls.
 
 React/Vite defaults to 127.0.0.1:5173 and proxies `/api` to Fastify on
 127.0.0.1:4317. `WEB_PORT` and `API_PORT` configure these together.
@@ -88,6 +87,9 @@ WebCrypto hashing shared by the annotation composer and API.
 historical/unbound evidence. Ordinary production work has no trusted runtime
 authority and remains `not_checked`/`unknown`; synthetic fixtures exercise the
 bound evidence states described below.
+`privacy.ts` in core supplies the shared pure credential-pattern heuristic;
+the API module re-exports it for existing callers. Backend configured secrets
+remain backend-only; the browser does not receive them for matching.
 
 Approval uses one immediate transaction for revision validation, the new
 snapshot, current workflow, proposal status and audit event. Stale or resolved
@@ -137,6 +139,16 @@ fetches the latest work version and context while preserving edited fields and
 resetting consent. Polling preserves drafts; semantic/payload changes invalidate
 consent while layout-only changes do not. The public `work-items/` source folder
 is distinct from the ignored private `work/` directory.
+
+`HostHandoff` and `BrowserHostAnnotationBridge` provide a separate external
+desktop-host request with temporary approval. Its dedicated visible preview
+contains six context references/revisions and a separate short comment; canonical
+selected-material JSON and neighboring content are outside the target. It uses
+`omitScreenshot:true` and treats `accepted:true` only as request acknowledgment.
+There is no host submission receipt, destination selection or reconciliation
+into work, consent receipts, outbox, evidence or connection capabilities. The
+in-app annotation/material/consent queue remains authoritative. The exact source
+contract and official references are in [CONNECTIONS.md](CONNECTIONS.md).
 
 ## Local decisions, sessions and evidence
 
@@ -238,11 +250,12 @@ Approval/start recheck those bindings. Start always returns blocked because
 `isolationPreflight` is deliberately false; no coding process is launched.
 Restart marks stored running tasks interrupted and revokes their approval.
 
-The runner package includes a verified-worktree helper and a protocol client
-whose callable methods are limited to initialization and permission-profile
-listing. It declines approval requests. Its diagnostic probe uses an empty
-configuration and does not sign in or start a coding turn. Worktree identity
-checks do not supply native filesystem, credential or network isolation.
+The runner package includes a verified-worktree helper and a diagnostic protocol
+client limited to initialization and permission-profile listing. It grants no
+command, file or permission approval and exposes no sign-in or coding-turn method.
+See [CONNECTIONS.md](CONNECTIONS.md) for the versioned diagnostic contract and
+observed verification limits. Worktree identity checks do not supply native
+filesystem, credential or network isolation.
 
 `import-routes.ts` exposes status/list/get and a submission route that returns
 blocked before reading source. `ImportStore.capture` is an internal helper for

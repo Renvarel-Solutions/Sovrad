@@ -3,10 +3,12 @@ import {mkdirSync,readdirSync,realpathSync} from 'node:fs';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {CODEX_VERSION} from './index.js';
-import {createProtocol} from './protocol.js';
+import {createProtocol,diagnosticInitializeParams} from './protocol.js';
 
 export async function probeAppServer(binary: string, home: string): Promise<{version:string;handshake:true;codingEnabled:false}> {
   if (!path.isAbsolute(binary)||!path.isAbsolute(home)) throw new Error('Explicit absolute probe paths required');
+  // Conservative proposed Windows identity; its current live response formatting remains unproved.
+  if (process.platform!=='win32') throw new Error('Untested diagnostic platform; coding remains disabled');
   mkdirSync(home,{recursive:true,mode:0o700});
   if (readdirSync(home).length) throw new Error('Probe requires an empty isolated configuration directory');
   home=realpathSync.native(home);
@@ -16,15 +18,11 @@ export async function probeAppServer(binary: string, home: string): Promise<{ver
   });
   // Drain diagnostics without storing private paths, account data or raw provider output.
   child.stderr.resume();
-  const client=createProtocol({input:child.stdin,output:child.stdout,close:()=>{child.kill();}});
+  const client=createProtocol({input:child.stdin,output:child.stdout,close:()=>{child.kill();}},
+    {home,platformFamily:'windows',platformOs:'windows'});
   child.once('error',()=>client.close());
   try {
-    const response=await client.call('initialize',{clientInfo:{name:'sovrad_preview',title:'Sovrad protocol probe',version:'0.1.0'},
-      capabilities:{experimentalApi:true}});
-    if (!response || typeof response!=='object' || !('userAgent' in response) || typeof response.userAgent!=='string' ||
-      !response.userAgent.includes('/'+CODEX_VERSION) || !('codexHome' in response) || response.codexHome!==home) {
-      throw new Error('Untested Codex version or configuration identity');
-    }
+    await client.call('initialize',diagnosticInitializeParams());
     client.initialized();
     return {version:CODEX_VERSION,handshake:true,codingEnabled:false};
   } finally {client.close();}

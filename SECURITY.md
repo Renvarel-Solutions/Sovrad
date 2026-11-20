@@ -28,6 +28,11 @@ public issues. Use private vulnerability reporting at https://github.com/Renvare
 - Codex and ChatGPT connections remain unavailable with no capabilities. Connect
   cannot sign in or enable an adapter; Disconnect revokes dependent local pending
   dispatch. Production supplies no interpreter adapter or trusted runtime authority.
+- External desktop host handoff has separate, temporary consent for a dedicated
+  reference preview and short comment. It requests `omitScreenshot:true`, but the
+  host may add context or allow edits before sending. Review that editor. An
+  acknowledgment confirms neither delivery nor a saved annotation, connected
+  agent, work transition or execution authority. See [CONNECTIONS.md](docs/CONNECTIONS.md).
 - AI needs backend opt-in and explicit request consent, has a durable request
   quota and a durable conservative $5 lifetime budget, validates output, rechecks
   revision and can create drafts only. Pending/unknown charges pause new calls.
@@ -40,8 +45,9 @@ public issues. Use private vulnerability reporting at https://github.com/Renvare
   enable coding, merge or deployment.
 - A genuine Git worktree separates checkouts; it does not establish native
   isolation from credentials, unrelated files, the control API or the network.
-- The diagnostic protocol probe initializes an empty configuration only. It does
-  not prove sign-in, model access or a secure coding sandbox.
+- The diagnostic protocol client is limited to initialization and permission-profile
+  discovery. Diagnostic metadata and synthetic transport checks do not prove
+  sign-in, model access, native isolation or a connected production agent.
 - Public contribution tests must never receive maintainer or production secrets.
 
 The publication scanner is a guardrail, not a confidentiality classifier.
@@ -51,3 +57,5 @@ Use `scripts/start-private-ai.ps1` for hidden key entry after confirming the
 dedicated provider project's enforced hard limit. Never place a key literal in
 commands, environment files or browser settings. The local budget estimates
 spending; provider billing controls remain an independent requirement.
+The hard-limit confirmation flags record an operator report, not verification
+of those controls. Offline notes and host-handoff preparation require no key.

@@ -89,3 +89,4 @@ export type * from './experience.js';
 export type {AnnotationDraft, SelectedAnnotationMaterialV1} from './annotation-material.js';
 export {buildSelectedAnnotationMaterial, serializeSelectedAnnotationMaterial, digestSelectedAnnotationMaterial} from './annotation-material.ts';
 export {NAVIGATION_SAMPLE_PROJECT, NAVIGATION_MAIN_WORKFLOW, NAVIGATION_CHILD_WORKFLOW} from './navigation-sample.ts';
+export {secretLike, containsPrivateContent, containsCredentialLike} from './privacy.ts';

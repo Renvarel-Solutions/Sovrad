@@ -1,6 +1,6 @@
 # Sovrad project state
 
-Local source status reviewed 2026-11-16 (package 0.1.0, schema 6).
+Source status reviewed 2026-11-19 (package 0.1.0, schema 6).
 This record distinguishes source capability from executed verification.
 
 ## Current product scope
@@ -50,32 +50,42 @@ Codex and ChatGPT inventories are unavailable with empty capabilities. Connect
 returns 503; Disconnect returns 200 and revokes dependent pending dispatch without
 sign-in or readiness.
 
+The annotation composer also offers a separate external desktop-host handoff.
+Its temporary consent covers a bounded reference preview and short comment,
+with no automatic screenshot requested. Host acknowledgment supplies no delivery
+receipt and changes no canonical work, outbox or capability state. Local saving
+and connected-consent intake retain their existing authority. See
+[CONNECTIONS.md](CONNECTIONS.md) for source and verification boundaries.
+
 ## Verification record
 
-- Local source checks passed for the decision/session/evidence changes, including
-  focused API security contracts, typechecks and the web build. Scoped browser
-  checks passed for the new decision views and recovery behavior. These are local
-  synthetic-data checks; they do not establish the final complete browser run.
+- Merged [PR 3](https://github.com/Renvarel-Solutions/Sovrad/pull/3) records the
+  project UI, annotation and decision baseline's local unit/integration tests,
+  typechecks, build, publication scan and complete browser suite with synthetic
+  data. Baseline receipts do not validate subsequent source changes or establish
+  a hosted CI result for them.
 - Repeat `npm test`, `npm run check`, `npm run public-check` and
   `npm run test:e2e` against the final candidate. A scan or check before this
   documentation update does not validate the final publication file set.
-- Scoped source and security review cleared the implementation changes. These
-  reviews do not authorize execution, import or publication.
+- Scoped source and security reviews cleared the PR 3 baseline changes;
+  subsequent changes require their own review. Reviews do not authorize
+  execution, import or publication.
 - Tests use synthetic content and in-process interpreter seams. They do not
   establish a live agent connection, provider billing or native isolation.
-- The public foundation was previously merged into
-  [Renvarel-Solutions/Sovrad](https://github.com/Renvarel-Solutions/Sovrad).
-  The newer local project UI, annotation and decision changes have not been published;
-  local verification does not establish a hosted CI result for them.
+- Diagnostic metadata operations observed on 2026-11-19 were version/help queries
+  and schema generation. These establish a versioned contract, not a current
+  initialization RPC, provider sign-in, model entitlement or native-isolation
+  proof. Historical initialization evidence is not current-version evidence.
 - No dedicated key was loaded, no paid provider call was made, and no real private
   project source, data or environment was touched. No pilot has run. Native coding
   remains disabled.
 
 ## Remaining gates
 
-Supported agent adapters, trusted live runtime-evidence integration and
-native/app-host agent connections remain gates. Local decision review and owner
-receipts do not satisfy them.
+Supported execution adapters, trusted live runtime-evidence integration and
+native agent connections remain gates. Local decision review, owner receipts
+and external host handoff do not satisfy them. Mobile layout provides no remote
+access; no remote-access service is implemented.
 The in-process interpretation claim expires after 20 seconds; its late-callback
 recovery is not native isolation or a proof of secure execution leases. Registry
 metadata never supplies source-read authority. No native coding or deployment

@@ -15,8 +15,10 @@ Native coding and HTTP import remain disabled; no approval bypasses this gate.
 - Repository helpers validate clean Git identity and prepare a genuine detached
   worktree. A worktree is not proof of native isolation.
 - The diagnostic protocol client allows initialization and permission-profile
-  listing only and declines command/file/permission approval requests. The
-  empty-configuration probe is pinned to Codex `0.166.0-alpha.5.1`.
+  listing only and grants no command/file/permission approval. The current
+  versioned source contract and observed verification limits are documented in
+  [CONNECTIONS.md](CONNECTIONS.md); diagnostic evidence does not establish a
+  production connection or native isolation.
 - Import status/list/get routes and an internal synthetic snapshot helper exist.
   HTTP import submission refuses capture before reading source.
 

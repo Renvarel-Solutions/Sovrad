@@ -5,6 +5,7 @@ import {api,APIError} from '../api';
 import {Dialog} from '../projects/ProjectEditor';
 import {useSelectedContext,type SelectedContext} from './useSelectedContext';
 import {SelectedMaterial} from './SelectedMaterial';
+import {HostHandoff} from './HostHandoff';
 
 export type AnnotationTarget={context:ContextRef;text:string;annotation?:Annotation;work?:WorkItem};
 
@@ -121,6 +122,7 @@ export function AnnotationComposer({target,onClose,onSaved}:{
       </fieldset>
       <p className="helper">{mode==='local'?'A local note stays in Sovrad. It will not be sent when an agent reconnects.':'Agent adapters are unavailable in this preview. This saves blocked work; it cannot start an agent.'}</p>
       {material&&<SelectedMaterial material={material}/>}
+      {material&&selection&&<HostHandoff context={selection.context} materialIdentity={json} enabled={ready&&!busy}/>}
       {mode==='connected'&&<label className="annotation-check"><input type="checkbox" checked={consent} disabled={busy||!ready}
         onChange={event=>setConsented(event.target.checked?json:'')}/>I approve sending these selected details to the chosen agent.</label>}
       <button className="primary-button" disabled={busy||!ready||!text.trim()||(mode==='connected'&&!consent)} onClick={()=>void submit()}>

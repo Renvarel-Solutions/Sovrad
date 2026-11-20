@@ -5,9 +5,8 @@
 A local visual workspace for registered projects, workflow maps, contextual notes
 and exact specification review. Apache-2.0. Early local preview.
 
-The project UI, annotations and decision review described here are local,
-unpublished changes beyond the public foundation. This preview has no connected
-agent execution or private-project import, and no pilot has been run.
+This preview has no connected agent execution or private-project import, and no
+pilot has been run.
 
 ## Run on Windows
 
@@ -47,6 +46,15 @@ interpretation or known acceptance criteria. It does not start an agent. A later
 connected request requires another explicit review and consent. If an amendment
 becomes stale, Refresh selected context preserves the draft and requires review
 and renewed consent before sending.
+
+External host handoff is a separate action in a compatible desktop browser.
+Write a short host comment, review the reference preview and approve sharing it
+before choosing Open host annotation. Sovrad requests no automatic screenshot.
+An accepted request does not confirm that an editor opened or an annotation was
+saved or sent. The host may add context and lets you edit; review its editor
+before sending. Sovrad cannot choose the conversation or confirm delivery.
+Keep in Sovrad remains the way to save the canonical annotation and work record.
+See [connection boundaries](docs/CONNECTIONS.md) for the contract and verification limits.
 
 ## Review decisions and evidence
 
@@ -112,6 +120,8 @@ its process environment settings when it exits. Start the web separately with
 environment file, VITE variable, source file or commit. `.env.example` documents
 settings; the app does not load it automatically. Backend configuration requires
 `SOVRAD_AI_ENABLED=true` and `SOVRAD_AI_HARD_LIMIT_CONFIRMED=true` with the key.
+Confirmation flags record the operator's report; they do not verify provider
+billing controls. Offline notes and host-handoff preparation need no API key.
 
 Each request needs explicit UI consent. Only the selected step's title,
 purpose, current rules and requested correction are sent. Consent resets when
@@ -144,8 +154,9 @@ approved repository commit and enforced sandbox/command approvals.
 External repository import is also disabled: its HTTP submission route refuses
 capture. Internal snapshot helpers are tested with synthetic repositories; this
 does not establish a private-project import. Local decision actions and owner
-receipts exist, but native/app-host adapters and live runtime-evidence integration
-remain unavailable. No live lead-agent controller is available.
+receipts exist, but execution adapters and live runtime-evidence integration
+remain unavailable. External host handoff supplies neither. No live lead-agent
+controller is available.
 
 The project UI uses the private registry, planning items, creation-only
 workflow/child maps and separate layout overlays. Registering a
